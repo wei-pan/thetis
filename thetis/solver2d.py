@@ -14,7 +14,7 @@ from .field_defs import field_metadata
 from .options import ModelOptions
 from . import callback
 from .log import *
-
+from firedrake.output import is_cg
 
 class FlowSolver2d(FrozenClass):
     """
@@ -87,7 +87,7 @@ class FlowSolver2d(FrozenClass):
 
         self.dt = None
         """Time step"""
-
+        
         self.options = ModelOptions()
         """
         Dictionary of all options. A :class:`.ModelOptions` object.
@@ -125,7 +125,7 @@ class FlowSolver2d(FrozenClass):
 
         self.bnd_functions = {'shallow_water': {}}
 
-        self._isfrozen = True
+        self._isfrozen = False
 
     def compute_time_step(self, u_scale=Constant(0.0)):
         r"""
@@ -155,8 +155,57 @@ class FlowSolver2d(FrozenClass):
         l = inner(test, csize / u) * dx
         solve(a == l, solution)
         return solution
+ 
+    def adaptive_time_step(self, solution): # try AdaptiveTimestepping, Wei, 26/05/2017
+        """
+        Computes maximum explicit time step from CFL condition.
 
-    def set_time_step(self, alpha=0.05):
+        .. math :: \Delta t = \frac{\Delta x}{U}
+
+        Velocity scalar :math:`U = \sqrt{g H} + U` where
+        :math:`U` is abs(velocity:sqrt(u^2 + v^2)).
+
+        :arg solution: Computational results at each step, used to compute dt
+        """
+        g = physical_constants['g_grav'].dat.data[0]   
+        min_cell_length = Function(FunctionSpace(self.mesh2d, 'DG', 0)).interpolate(MinCellEdgeLength(self.mesh2d))
+
+        uv_2d, elev_2d = solution.split()
+        if self.options.element_family == 'rt-dg':
+            native_space = uv_2d.function_space()
+            visu_space = exporter.get_visu_space(native_space)
+            tmp_proj_func = visu_space.get_work_function()
+            Interpolator(uv_2d, tmp_proj_func).interpolate()
+            visu_space.restore_work_function(tmp_proj_func)
+        else:
+            tmp_proj_func = uv_2d 
+        uv_mod = tmp_proj_func
+
+        fs_tmp = FunctionSpace(self.mesh2d, "DG", self.options.order)
+        
+        H_mod = Function(fs_tmp).assign(self.fields.bathymetry_2d + elev_2d) 
+        H_mod.dat.data[H_mod.dat.data < self.options.wd_mindep] = self.options.wd_mindep
+        u_mod = Function(fs_tmp).assign(uv_mod.sub(0)) 
+        v_mod = Function(fs_tmp).assign(uv_mod.sub(1)) 
+
+        cell_time = Function(FunctionSpace(self.mesh2d, 'DG', 0))
+
+        min_time_wave_speed_kernel_2d = """ const double g=%(gravity)s; float max=-10000000, wave_speed=0;
+        for(int i=0;i<vert_u_cell.dofs;i++){
+            wave_speed=sqrt(pow(vert_u_cell[i][0],2)+pow(vert_v_cell[i][0],2))+sqrt(g*vert_h_cell[i][0]);         
+            max=fmax(wave_speed,max);
+        }
+        cell_wave_time[0][0]=cell_lengths[0][0]/max;
+        """ % {"gravity": g}  
+
+        par_loop(min_time_wave_speed_kernel_2d, dx, {"cell_wave_time": (cell_time, RW),
+                                                     "vert_h_cell": (H_mod, READ),
+                                                     "vert_u_cell": (u_mod, READ),
+                                                     "vert_v_cell": (v_mod, READ),
+                                                     "cell_lengths": (min_cell_length, READ)})  
+        return cell_time
+
+    def set_time_step(self, solution, alpha=1.0): # change default alpha to 1.0 from 0.05, Wei
         """
         Sets the model the model time step
 
@@ -166,15 +215,31 @@ class FlowSolver2d(FrozenClass):
         :kwarg float alpha: CFL number scaling factor
         """
         # TODO revisit math alpha is OBSOLETE
-        self.dt = self.options.dt
-        if self.dt is None:
-            mesh2d_dt = self.compute_time_step(u_scale=self.options.u_advection)
-            dt = self.options.cfl_2d*alpha*float(mesh2d_dt.dat.data.min())
-            dt = self.comm.allreduce(dt, op=MPI.MIN)
-            self.dt = dt
+        #mesh2d_dt = self.compute_time_step(u_scale=self.options.u_advection)
+        mesh2d_dt = self.adaptive_time_step(solution) # Wei
+        dt_max = self.comm.allreduce(self.options.cfl_2d*alpha*float(mesh2d_dt.dat.data.min()), op=MPI.MIN)
+        cfl_2d = self.options.cfl_2d
+        if self.timestepper is not None:
+            cfl_2d = self.timestepper.cfl_coeff     
+        if self.options.dt is None:
+            print_output('Time step is not set initially, so varing adaptively:')
+            if cfl_2d == np.inf:
+                print_output('CFL is unconditionally stable')
+                dt_max = self.options.cfl_2d*alpha*float(self.compute_time_step(u_scale=self.options.u_advection).dat.data.min())
+                dt_max = 2.0*self.comm.allreduce(dt_max, op=MPI.MIN)
+            self.dt = dt_max
+        else:
+            if cfl_2d == np.inf:
+                print_output('CFL is unconditionally stable')
+                self.dt = self.options.dt
+            elif dt_max <= self.options.dt:
+                self.dt = dt_max 
+            else:
+                self.dt = self.options.dt
         if self.comm.rank == 0:
             print_output('dt = {:}'.format(self.dt))
             sys.stdout.flush()
+        return self.dt
 
     def create_function_spaces(self):
         """
@@ -192,7 +257,8 @@ class FlowSolver2d(FrozenClass):
         self.function_spaces.P1DGv_2d = VectorFunctionSpace(self.mesh2d, 'DG', 1)
         # 2D velocity space
         if self.options.element_family == 'rt-dg':
-            self.function_spaces.U_2d = FunctionSpace(self.mesh2d, 'RT', self.options.order+1)
+            #self.function_spaces.U_2d = FunctionSpace(self.mesh2d, 'RT', self.options.order+1)
+            self.function_spaces.U_2d = FunctionSpace(self.mesh2d, 'RT', self.options.order) # Wei, for use of slopemodification & better results
             self.function_spaces.H_2d = FunctionSpace(self.mesh2d, 'DG', self.options.order)
         elif self.options.element_family == 'dg-cg':
             self.function_spaces.U_2d = VectorFunctionSpace(self.mesh2d, 'DG', self.options.order, name='U_2d')
@@ -210,11 +276,17 @@ class FlowSolver2d(FrozenClass):
         """
         Creates shallow water equations
         """
+        if self.options.wd_alpha is not None:
+            self.options.wd_alpha = self.get_alpha(self.fields.bathymetry_2d.dat.data.min()) # Wei, 16/05/2017
+
         if not hasattr(self, 'U_2d'):
             self.create_function_spaces()
         self._isfrozen = False
         # ----- fields
         self.fields.solution_2d = Function(self.function_spaces.V_2d, name='solution_2d')
+        self.solution_2d_old = Function(self.function_spaces.V_2d, name='solution_2d_old') # added for exporter of adaptive time stepping, Wei
+        self.exchange_tmp = Function(self.function_spaces.V_2d, name='exchange_tmp') # Wei
+        self.export_tmp = Function(self.function_spaces.V_2d, name='export_tmp') # Wei
         self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
         get_horizontal_elem_size_2d(self.fields.h_elem_size_2d)
 
@@ -222,7 +294,11 @@ class FlowSolver2d(FrozenClass):
         self.eq_sw = shallowwater_eq.ShallowWaterEquations(
             self.fields.solution_2d.function_space(),
             self.fields.bathymetry_2d,
-            self.options
+            nonlin=self.options.nonlin,
+            wd_alpha=self.options.wd_alpha, 
+            wd_mindep=self.options.wd_mindep,
+            include_grad_div_viscosity_term=self.options.include_grad_div_viscosity_term,
+            include_grad_depth_viscosity_term=self.options.include_grad_depth_viscosity_term
         )
         self.eq_sw.bnd_functions = self.bnd_functions['shallow_water']
         self._isfrozen = True  # disallow creating new attributes
@@ -251,10 +327,13 @@ class FlowSolver2d(FrozenClass):
             'uv_lax_friedrichs': self.options.uv_lax_friedrichs,
             'coriolis': self.options.coriolis,
             'wind_stress': self.options.wind_stress,
-            'atmospheric_pressure': self.options.atmospheric_pressure,
             'uv_source': self.options.uv_source_2d,
             'elev_source': self.options.elev_source_2d, }
-        self.set_time_step()
+
+        self.timestepper = None # for set_time_step, Wei
+
+        self.set_time_step(self.fields.solution_2d) # set time step initially, Wei
+
         if self.options.timestepper_type.lower() == 'ssprk33':
             self.timestepper = rungekutta.SSPRK33(self.eq_sw, self.fields.solution_2d,
                                                   fields, self.dt,
@@ -306,7 +385,9 @@ class FlowSolver2d(FrozenClass):
             self.eq_mom = shallowwater_eq.ShallowWaterMomentumEquation(
                 u_test, self.function_spaces.H_2d, self.function_spaces.U_2d,
                 self.fields.bathymetry_2d,
-                options=self.options
+                nonlin=self.options.nonlin,
+                include_grad_div_viscosity_term=self.options.include_grad_div_viscosity_term,
+                include_grad_depth_viscosity_term=self.options.include_grad_depth_viscosity_term
             )
             self.eq_mom.bnd_functions = self.bnd_functions['shallow_water']
             self.timestepper = timeintegrator.PressureProjectionPicard(self.eq_sw, self.eq_mom, self.fields.solution_2d,
@@ -335,6 +416,7 @@ class FlowSolver2d(FrozenClass):
                                                           solver_parameters_dirk=sp_impl)
         else:
             raise Exception('Unknown time integrator type: '+str(self.options.timestepper_type))
+
         print_output('Using time integrator: {:}'.format(self.timestepper.__class__.__name__))
         self._isfrozen = True  # disallow creating new attributes
 
@@ -369,6 +451,210 @@ class FlowSolver2d(FrozenClass):
 
         self._isfrozen = True  # disallow creating new attributes
 
+    def SlopeLimiter(self, solution): # Wei, 05/05/2017
+        """
+        Creates slope limiter for the prevention of shocks. This is from Kuzmin (2011)
+        """ 
+        uv_2d, elev_2d = solution.split()
+        if self.options.element_family == 'rt-dg':
+            native_space = uv_2d.function_space()
+            visu_space = exporter.get_visu_space(native_space)
+            tmp_proj_func = visu_space.get_work_function()
+            Interpolator(uv_2d, tmp_proj_func).interpolate()
+            visu_space.restore_work_function(tmp_proj_func)
+        else:
+            tmp_proj_func = uv_2d
+
+        SL_eta = VertexBasedLimiter(self.function_spaces.H_2d)
+        SL_eta.apply(solution.sub(1))
+        
+        func_tmp = Function(self.function_spaces.U_2d)               
+        fs_u =FunctionSpace(self.mesh2d, 'DG', self.options.order)
+
+        func_tmp = Function(fs_u) 
+        #func_tmp.assign(solution.sub(0).sub(0)*(solution.sub(1) + self.fields.bathymetry_2d))
+        func_tmp.assign(tmp_proj_func.sub(0)*(solution.sub(1) + self.fields.bathymetry_2d))
+        SL_uv = VertexBasedLimiter(fs_u)
+        SL_uv.apply(func_tmp)
+        tmp_proj_func.sub(0).assign(func_tmp/(solution.sub(1) + self.fields.bathymetry_2d))
+
+        func_tmp.assign(tmp_proj_func.sub(1)*(solution.sub(1) + self.fields.bathymetry_2d))
+        SL_uv.apply(func_tmp)
+        tmp_proj_func.sub(1).assign(func_tmp/(solution.sub(1) + self.fields.bathymetry_2d))
+
+        uv_2d.project(tmp_proj_func)
+        
+        return solution	
+
+    def SlopeModification(self, solution): # Wei, 05/05/2017
+        """
+        Creates slope modification for the prevention of non negative flows in some verticies of cells. This is from Ern et al (2011)
+        """
+        uv_2d, elev_2d = solution.split()
+        if self.options.element_family == 'rt-dg':
+            native_space = uv_2d.function_space()
+            visu_space = exporter.get_visu_space(native_space)
+            tmp_proj_func = visu_space.get_work_function()
+            Interpolator(uv_2d, tmp_proj_func).interpolate()
+            visu_space.restore_work_function(tmp_proj_func)
+        else:
+            tmp_proj_func = uv_2d 
+
+        fs_tmp = FunctionSpace(self.mesh2d, "DG", self.options.order)
+
+        H = Function(fs_tmp).assign(elev_2d + self.fields.bathymetry_2d)
+        u = Function(fs_tmp).assign(tmp_proj_func.sub(0)) 
+        v = Function(fs_tmp).assign(tmp_proj_func.sub(1))    
+
+        func_eta_tmp = Function(fs_tmp)
+        func_u_tmp = Function(fs_tmp)
+        func_v_tmp = Function(fs_tmp)
+
+        # add error if p>1 - in future make an option where we can project to p=1 from p>1
+        if self.function_spaces.V_2d.ufl_element().degree() != 1:
+            raise ValueError('Slope Modification technique cannot be used with DGp, p > 1')
+
+        slope_modification_2d_kernel = """ double new_cell = 0; const double E=%(epsilon)s; int a=0, n1, n2, n3, a1=0, a3=0, flag1, flag2, flag3, deltau, deltav, npos;
+        #define STEP(X) (((X) <= 0) ? 0 : 1)
+        for(int i=0;i<vert_h_cell.dofs;i++){
+            new_cell+=vert_h_cell[i][0];
+        }
+        new_cell=new_cell/vert_h_cell.dofs;
+        for(int i=0;i<new_vert_h_cell.dofs;i++){
+            if (vert_h_cell[i][0]>E){
+                a=a+1;
+            }
+        }
+        if (a==new_vert_h_cell.dofs){
+            for(int i=0;i<new_vert_h_cell.dofs;i++){
+                new_vert_h_cell[i][0]=vert_h_cell[i][0];
+            }
+        }
+        if (new_cell<=E){
+            for(int i=0;i<new_vert_h_cell.dofs;i++){
+                new_vert_h_cell[i][0]=new_cell;
+            }
+        }
+        if (new_cell>E){
+            if (a<new_vert_h_cell.dofs){
+                for(int i=1;i<new_vert_h_cell.dofs;i++){
+                    if (vert_h_cell[0][0]>=vert_h_cell[i][0]){
+                        a1=a1+1;
+                    }
+                }
+                for(int i=0;i<new_vert_h_cell.dofs-1;i++){
+                    if (vert_h_cell[2][0]>=vert_h_cell[i][0]){
+                        a3=a3+1;
+                    }
+                }
+                if (a1==2){
+                    n3=0;
+                    if (a3==2){
+                        n2=2;
+                        n1=1;
+                    }
+                    if (a3==1){
+                        n2=2;
+                        n1=1;
+                    }
+                    if (a3==0){
+                        n1=2;
+                        n2=1;
+                    }
+                }
+                if (a1==0){
+                    n1=0;
+                    if (a3==2){
+                        n3=2;
+                        n2=1;
+                    }
+                    if (a3==1){
+                        n2=2;
+                        n3=1;
+                    }
+                    if (a3==0){
+                        n2=2;
+                        n3=1;
+                    }
+                }
+                if (a1==1){
+                    n2=0;
+                    if (a3==0){
+                        n3=1;
+                        n1=2;
+                    }
+                    if (a3==2){
+                        n3=2;
+                        n1=1;
+                    }
+                    if (a3==1){
+                        if (vert_h_cell[0][0]>=vert_h_cell[2][0]){
+                            n3=1;
+                            n1=2;
+                        }
+                        if (vert_h_cell[0][0]<vert_h_cell[2][0]){
+                            n3=2;
+                            n1=1;
+                        }
+                    }
+                }
+                new_vert_h_cell[n1][0]=E;
+                new_vert_h_cell[n2][0]=fmax(E,vert_h_cell[n2][0]-(new_vert_h_cell[n1][0]-vert_h_cell[n1][0])/2.0);
+                new_vert_h_cell[n3][0]=vert_h_cell[n3][0]-(new_vert_h_cell[n1][0]-vert_h_cell[n1][0])-(new_vert_h_cell[n2][0]-vert_h_cell[n2][0]);
+            }
+        }
+
+        for(int i=0;i<new_vert_h_cell.dofs;i++){
+            if  (new_vert_h_cell[i][0]<=E){
+                new_vert_h_cell[i][0]=E;
+            }
+        }
+
+        flag1=STEP(new_vert_h_cell[0][0]-(E+1E-7));
+        flag2=STEP(new_vert_h_cell[1][0]-(E+1E-7));
+        flag3=STEP(new_vert_h_cell[2][0]-(E+1E-7));
+        npos=flag1+flag2+flag3;
+        deltau=(vert_u_cell[0][0]*vert_h_cell[0][0]*(1-flag1))+(vert_u_cell[1][0]*vert_h_cell[1][0]*(1-flag2))+(vert_u_cell[2][0]*vert_h_cell[2][0]*(1-flag3));
+        deltav=(vert_v_cell[0][0]*vert_h_cell[0][0]*(1-flag1))+(vert_v_cell[1][0]*vert_h_cell[1][0]*(1-flag2))+(vert_v_cell[2][0]*vert_h_cell[2][0]*(1-flag3));
+        if (npos>0){
+            new_vert_u_cell[0][0]=flag1*(vert_u_cell[0][0]*vert_h_cell[0][0]+(deltau/npos))/new_vert_h_cell[0][0];
+            new_vert_u_cell[1][0]=flag2*(vert_u_cell[1][0]*vert_h_cell[1][0]+(deltau/npos))/new_vert_h_cell[1][0];
+            new_vert_u_cell[2][0]=flag3*(vert_u_cell[2][0]*vert_h_cell[2][0]+(deltau/npos))/new_vert_h_cell[2][0];
+            new_vert_v_cell[0][0]=flag1*(vert_v_cell[0][0]*vert_h_cell[0][0]+(deltav/npos))/new_vert_h_cell[0][0];
+            new_vert_v_cell[1][0]=flag2*(vert_v_cell[1][0]*vert_h_cell[1][0]+(deltav/npos))/new_vert_h_cell[1][0];
+            new_vert_v_cell[2][0]=flag3*(vert_v_cell[2][0]*vert_h_cell[2][0]+(deltav/npos))/new_vert_h_cell[2][0];
+        }
+        if (npos==0){
+            new_vert_u_cell[0][0]=0;
+            new_vert_u_cell[1][0]=0;
+            new_vert_u_cell[2][0]=0;
+            new_vert_v_cell[0][0]=0;
+            new_vert_v_cell[1][0]=0;
+            new_vert_v_cell[2][0]=0;
+        }
+        """ % {"epsilon": self.options.wd_mindep} 
+
+        args = {
+                "new_vert_v_cell": (func_v_tmp, RW),
+                "new_vert_u_cell": (func_u_tmp, RW),
+                "new_vert_h_cell": (func_eta_tmp, RW),
+                "vert_h_cell": (H, READ),
+                "vert_u_cell": (u, READ),
+                "vert_v_cell": (v, READ)
+               }  
+
+        par_loop(slope_modification_2d_kernel, dx, args)  
+
+        tmp_proj_func.sub(0).assign(func_u_tmp)
+        tmp_proj_func.sub(1).assign(func_v_tmp)
+        if self.options.element_family == 'rt-dg':
+            uv_2d.project(tmp_proj_func) 
+        else:
+            uv_2d.assign(tmp_proj_func) 
+        elev_2d.assign(func_eta_tmp - self.fields.bathymetry_2d) 
+
+        return solution
+
     def initialize(self):
         """
         Creates function spaces, equations, time stepper and exporters
@@ -399,7 +685,7 @@ class FlowSolver2d(FrozenClass):
             elev_2d.project(elev)
         if uv is not None:
             uv_2d.project(uv)
-
+        self.solution_2d_old.assign(self.fields.solution_2d) # added, Wei
         self.timestepper.initialize(self.fields.solution_2d)
 
     def add_callback(self, callback, eval_interval='export'):
@@ -420,6 +706,7 @@ class FlowSolver2d(FrozenClass):
         Also evaluates all callbacks set to 'export' interval.
         """
         self.callbacks.evaluate(mode='export')
+   
         for key in self.exporters:
             self.exporters[key].export()
 
@@ -496,6 +783,49 @@ class FlowSolver2d(FrozenClass):
                                  u=norm_u, cpu=cputime))
         sys.stdout.flush()
 
+    def get_alpha(self, H0):
+        """
+        Alternative to try alpha, finding minimum alpha to let all depths below the threshold wd_mindep
+
+        :arg H0: Minimum water depth
+        """     
+        if H0 >= 0.:
+            return Constant(0.)
+        elif not self.options.constant_alpha:
+            return Constant(np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep) # new formulated function, Wei
+            #return Constant(np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep) # artificial porosity method
+            #return Constant(np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0))) # original bathymetry changed method
+        else:
+            return Constant(self.options.wd_alpha)
+
+    def thacker_compare(self, t, eta):
+        # Print prescribed results, for Thacker # Wei
+        D0 = Constant(50.)
+        L = Constant(430620.)
+        eta0 = Constant(2.)
+        a = ((D0+eta0)**2-D0**2)/((D0+eta0)**2+D0**2)
+        A = Constant(a)
+        R = 430620.
+        D = 50.
+        omega = (8*9.81*D/(R*R))**0.5
+
+        x = SpatialCoordinate(self.mesh2d)
+        bathy = D0*(1-(x[0]*x[0]+x[1]*x[1])/(L*L))
+
+        TMP = Constant(np.cos(omega*t))
+        elev_t=D0*(sqrt(1-A*A)/(1-A*TMP) - 1 - (x[0]*x[0]+x[1]*x[1])*((1-A*A)/((1-A*TMP)**2)-1)/(L*L))
+        elev_analytic = conditional(elev_t < -bathy, -bathy+self.options.wd_mindep, elev_t)
+ 
+        #uv, eta = solution.split()
+        eta_tilde = Function(FunctionSpace(self.mesh2d, 'DG', self.options.order))#Function(eta.function_space())
+        wd_bath_displacement = self.eq_sw.water_height_displacement
+        eta_tilde.project(eta + wd_bath_displacement(eta))
+        #eta_tilde.project(eta)
+
+        area = pi*475823.23**2
+        e = errornorm(elev_analytic, eta_tilde)/np.sqrt(area)
+        print_output(e)
+
     def iterate(self, update_forcings=None,
                 export_func=None):
         """
@@ -513,7 +843,6 @@ class FlowSolver2d(FrozenClass):
         # TODO I think export function is obsolete as callbacks are in place
         if not self._initialized:
             self.initialize()
-
         t_epsilon = 1.0e-5
         cputimestamp = time_mod.clock()
         next_export_t = self.simulation_time + self.options.t_export
@@ -535,17 +864,82 @@ class FlowSolver2d(FrozenClass):
                 self.exporters['vtk'].export_bathymetry(self.fields.bathymetry_2d)
 
         while self.simulation_time <= self.options.t_end + t_epsilon:
+            # uv & eta modified based on the wetting-drying method: a thin film # Wei
+            self.solution_2d_old.assign(self.fields.solution_2d) # for exporting with adaptive time stepping, Wei
+            self.timestepper.dt_const.assign(self.set_time_step(self.fields.solution_2d)) # Wei
+            if self.options.wd_alpha is None:
+                if self.options.wd_mindep is not None: 
+                    # this thin-film wetting-drying scheme extremely relies on the high resolution at wetting-drying front
+                    # has been benchmarked by Thacker test, but needs further benchmark by orther tests, Wei
+                    uv_2d, elev_2d = self.fields.solution_2d.split()
+                    native_space = uv_2d.function_space()
+                    visu_space = exporter.get_visu_space(native_space)
+                    tmp_proj_func = visu_space.get_work_function()
+                    Interpolator(uv_2d, tmp_proj_func).interpolate()
+                    visu_space.restore_work_function(tmp_proj_func)
+                    UV = tmp_proj_func.dat.data
+                    H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data 
+
+                    ind = np.where(H[:] <= self.options.wd_mindep)[0]
+                    H[ind] = self.options.wd_mindep
+                    elev_2d.dat.data[ind] = (H - self.fields.bathymetry_2d.dat.data)[ind]
+                    #uv_2d.dat.data[ind] = [0., 0.]
+                    #UV[ind] = [0., 0.]
+                    #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wd_mindep, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
+                    #uv_2d.project(tmp_proj_func)
+
+                    #UV[H <= self.options.wd_mindep] = [0., 0.]
+                    #H[H < self.options.wd_mindep] = self.options.wd_mindep
+
+                    #eta_vector = self.fields.solution_2d.dat.data[1]
+                    #tmp_vector = H - self.fields.bathymetry_2d.dat.data
+                
+                    #assert tmp_vector.shape[0] == eta_vector.shape[0]
+                    #for i, ele in enumerate(tmp_vector):
+                    #    eta_vector[i] = ele
+
+                    #for j, uv in enumerate(UV):
+                    #    self.fields.solution_2d.dat.data[0][j] = uv
+
+                    #uv_2d.assign(tmp_proj_func)
+                    #uv_2d.project(tmp_proj_func)
+
+                    #self.fields.solution_2d = self.SlopeLimiter(self.fields.solution_2d)
+                    self.fields.solution_2d = self.SlopeModification(self.fields.solution_2d)
+            else:
+                uv_2d, elev_2d = self.fields.solution_2d.split()
+                H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data
+                H_min = H.min()
+                self.options.wd_alpha.assign(self.get_alpha(H_min)) 
+                print_output('alpha = {:}'.format(self.options.wd_alpha.dat.data))
 
             self.timestepper.advance(self.simulation_time, update_forcings)
 
+            #if self.options.wd_alpha is not None: # only for thacker test, Wei
+                #t = self.simulation_time + self.dt
+                #self.thacker_compare(t, elev_2d)
+                #uv11, ele11 = split(self.fields.solution_2d)
+                #self.thacker_compare(t, ele11) # to see what the difference between split(splution) and solution.split() is
+
             # Move to next time step
             self.iteration += 1
-            self.simulation_time = self.iteration*self.dt
-
+            #self.simulation_time = self.iteration*self.dt # it seems be not appropriate for adaptive time step? Wei; because no adaptive temporarily, could be added latter
+            self.simulation_time = self.simulation_time + self.dt
             self.callbacks.evaluate(mode='timestep')
 
             # Write the solution to file
-            if self.simulation_time >= next_export_t - t_epsilon:
+            if self.simulation_time >= next_export_t - t_epsilon: # has been modified to export properly when adaptive timestepping; seems higher time cost, Wei, 58/05/2017
+                if self.options.dt is not None and self.options.t_export % self.options.dt <= 1E-10:
+                    self.export()
+                else:
+                    fac = (next_export_t - (self.simulation_time - self.dt)) / self.dt
+                    tmp = fac * (self.fields.solution_2d - self.solution_2d_old) + self.solution_2d_old
+                    self.export_tmp.assign(tmp)
+                    self.exchange_tmp.assign(self.fields.solution_2d)
+                    self.fields.solution_2d.assign(self.export_tmp)
+                    self.export()
+                    self.fields.solution_2d.assign(self.exchange_tmp)
+
                 self.i_export += 1
                 next_export_t += self.options.t_export
 
@@ -553,6 +947,10 @@ class FlowSolver2d(FrozenClass):
                 cputimestamp = time_mod.clock()
                 self.print_state(cputime)
 
-                self.export()
+                if next_export_t <= self.simulation_time:
+                    raise ValueError('Export time step is too small that needs to be re-prescribed!')
+
                 if export_func is not None:
                     export_func()
+
+

@@ -222,37 +222,36 @@ class ShallowWaterTerm(Term):
         return eta_ext, uv_ext
 
 #    def wd_bathymetry_displacement(self, solution):
-#        """
-#        Returns wetting and drying bathymetry discplacement as described in:
-#        Karna et al.,  2011.
-#        """
+        """
+        Returns wetting and drying bathymetry discplacement as described in:
+        Karna et al.,  2011.
+        """
 #        if self.wd_alpha is None:
 #            return self.update_depth_wd(self, solution) - (self.bathymetry + solution[2]) # Wei
 #        else:
 #            H = self.bathymetry + solution[2]
 #            return 0.5 * (sqrt(H ** 2 + self.wd_alpha ** 2) - H)
 
-#    def get_depth_ext(self, eta): # Wei, 'get_total_depth' before # should be imerged to update_depth() in class BaseShallowwaterEquation
-#        """
-#        Returns total water column depth for external input
-#        """
-#        if self.nonlin:
-#            if self.wd_alpha is None:
-#                total_h = self.bathymetry + eta
-#            else:
-#                H = self.bathymetry + eta
-#                mindep_wd_interface = self.wd_alpha
-#                total_h = H + 2 * mindep_wd_interface**2 / (2 * mindep_wd_interface + abs(H)) + 0.5 * (abs(H) - H) # new formulated, Wei	
-#                # total_h = H + 0.5 * (sqrt(H ** 2 + self.wd_alpha ** 2) - H) # old bathymetry changed method, Wei
-#        else:
-#            total_h = self.bathymetry
-#        return total_h
+    def get_depth_ext(self, eta): # Wei, 'get_total_depth' before
+        """
+        Returns total water column depth for external input
+        """
+        if self.nonlin:
+            if self.wd_alpha is None:
+                total_h = self.bathymetry + eta
+            else:
+                H = self.bathymetry + eta
+                total_h = H + 0.5 * (sqrt(H ** 2 + self.wd_alpha ** 2) - H)
+        else:
+            total_h = self.bathymetry
+        return total_h
 
 #    def update_depth_wd(self, solution): # Wei, added
-#        """
-#        Returns new total water column depth because of wetting-drying judges
-#        """
-#        if self.nonlin:       
+        """
+        Returns new total water column depth because of wetting-drying judges
+        """
+#        if self.nonlin:
+        
 #            if self.wd_alpha is None:
 #                H = self.bathymetry.dat.data + solution.dat.data[1]        
 #                H[H < self.wd_mindep] = self.wd_mindep
@@ -263,15 +262,17 @@ class ShallowWaterTerm(Term):
 #                    tmp[i] = h_wd
 #            else:
 #                total_h = self.bathymetry + solution[2] + self.wd_bathymetry_displacement(solution)
+
 #        else:
 #            total_h = self.bathymetry
+
 #        return total_h
 
 
-#    def update_uv_wd(self, uv): # Wei, added
-#        """
-#        Updates if dying, flux should be set zero AND redistributed
-#        """        
+    def update_uv_wd(self, uv): # Wei, added
+        """
+        Updates if dying, flux should be set zero AND redistributed
+        """        
 
 
 class ShallowWaterMomentumTerm(ShallowWaterTerm):
@@ -405,7 +406,7 @@ class HUDivTerm(ShallowWaterContinuityTerm):
 
         if hu_by_parts:
             f = -inner(grad(self.eta_test), total_h*uv)*self.dx
-            if self.eta_is_dg: # if not? not available temporarily, Wei
+            if self.eta_is_dg:
                 h = avg(total_h)
                 uv_rie = avg(uv) + sqrt(g_grav/h)*jump(eta, self.normal)
                 hu_star = h*uv_rie
@@ -417,13 +418,12 @@ class HUDivTerm(ShallowWaterContinuityTerm):
                     eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
                     eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
                     # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
-                    total_h_ext = BaseShallowWaterEquation(self.function_space, self.bathymetry, self.nonlin, self.wd_alpha, self.wd_mindep).update_depth_wd(eta_ext_old) # Wei
+                    total_h_ext = self.get_depth_ext(eta_ext_old) # Wei
                     h_av = 0.5*(total_h + total_h_ext)
                     eta_jump = eta - eta_ext
-                    un_rie = 0.5*inner(uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*eta_jump # explore further? Wei. 
-
+                    un_rie = 0.5*inner(uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*eta_jump
                     un_jump = inner(uv_old - uv_ext_old, self.normal)
-                    eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump # why reversed in sqrt()? probably, c_rie=sqrt(g*h) => c_rie=h*sqrt(g/h), to form linear relationship, Wei 19/05/2017
+                    eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump
                     h_rie = self.bathymetry + eta_rie
                     f += h_rie*un_rie*self.eta_test*ds_bnd
         else:
@@ -431,7 +431,7 @@ class HUDivTerm(ShallowWaterContinuityTerm):
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                if funcs is None or 'un' in funcs: # probably for 'None', on wall, dot(uv, self.normal) absolutely = 0, so 'None' can be cancelled, Wei; maybe 'uv' also should be added 
+                if funcs is None or 'un' in funcs:
                     f += -total_h*dot(uv, self.normal)*self.eta_test*ds_bnd
         return -f
 
@@ -454,7 +454,7 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
     jump and average operators across the interface.
     """
     def residual(self, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions=None): # Wei
-        uv_lax_friedrichs = fields_old.get('uv_lax_friedrichs') # default is Constant(1.0), Wei
+        uv_lax_friedrichs = fields_old.get('uv_lax_friedrichs')
 
         if not self.nonlin:
             return 0
@@ -463,12 +463,10 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
 
         if horiz_advection_by_parts:
             # f = -inner(nabla_div(outer(uv, self.u_test)), uv)
-            f = -(uv[0]*div(self.u_test[0]*uv_old) +
-                  uv[1]*div(self.u_test[1]*uv_old)) * self.dx # added, simplified seems clearer, Wei, 22/05/2017
-            #f = -(Dx(uv_old[0]*self.u_test[0], 0)*uv[0] +
-            #      Dx(uv_old[0]*self.u_test[1], 0)*uv[1] +
-            #      Dx(uv_old[1]*self.u_test[0], 1)*uv[0] +
-            #      Dx(uv_old[1]*self.u_test[1], 1)*uv[1])*self.dx # cancelled, Wei
+            f = -(Dx(uv_old[0]*self.u_test[0], 0)*uv[0] +
+                  Dx(uv_old[0]*self.u_test[1], 0)*uv[1] +
+                  Dx(uv_old[1]*self.u_test[0], 1)*uv[0] +
+                  Dx(uv_old[1]*self.u_test[1], 1)*uv[1])*self.dx
             if self.u_continuity in ['dg', 'hdiv']:
                 un_av = dot(avg(uv_old), self.normal('-'))
                 # NOTE solver can stagnate
@@ -478,12 +476,10 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
                 # uv_up = uv('-')*s + uv('+')*(1-s)
                 # NOTE mean flux
                 uv_up = avg(uv)
-                f += (uv_up[0]*jump(self.u_test[0], inner(uv_old, self.normal)) +
-                      uv_up[1]*jump(self.u_test[1], inner(uv_old, self.normal)))*self.dS # added, simplified, Wei
-                #f += (uv_up[0]*jump(self.u_test[0], uv_old[0]*self.normal[0]) +
-                #      uv_up[1]*jump(self.u_test[1], uv_old[0]*self.normal[0]) +
-                #      uv_up[0]*jump(self.u_test[0], uv_old[1]*self.normal[1]) +
-                #      uv_up[1]*jump(self.u_test[1], uv_old[1]*self.normal[1]))*self.dS # cancelled, Wei
+                f += (uv_up[0]*jump(self.u_test[0], uv_old[0]*self.normal[0]) +
+                      uv_up[1]*jump(self.u_test[1], uv_old[0]*self.normal[0]) +
+                      uv_up[0]*jump(self.u_test[0], uv_old[1]*self.normal[1]) +
+                      uv_up[1]*jump(self.u_test[1], uv_old[1]*self.normal[1]))*self.dS
                 # Lax-Friedrichs stabilization
                 if uv_lax_friedrichs is not None:
                     gamma = 0.5*abs(un_av)*uv_lax_friedrichs
@@ -496,7 +492,7 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
                             n = self.normal
                             uv_ext = uv - 2*dot(uv, n)*n
                             gamma = 0.5*abs(dot(uv_old, n))*uv_lax_friedrichs
-                            f += gamma*dot(self.u_test, uv-uv_ext)*ds_bnd # for two vectors, dot() is equivalent to inner(), Wei
+                            f += gamma*dot(self.u_test, uv-uv_ext)*ds_bnd
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
@@ -558,7 +554,7 @@ class HorizontalViscosityTerm(ShallowWaterMomentumTerm):
     """
     def residual(self, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions=None): # Wei
 
-        nu = fields_old.get('viscosity_h') # fields can be found in solver2d, referring to options.h_viscosity, Wei
+        nu = fields_old.get('viscosity_h')
         if nu is None:
             return 0
 
@@ -584,8 +580,8 @@ class HorizontalViscosityTerm(ShallowWaterMomentumTerm):
             if p == 0:
                 alpha = 1.5
             f += (
-                + alpha/avg(h)*inner(tensor_jump(self.u_test, n), stress_jump)*self.dS # in the math provided, sigma = alpha/avg(h), Wei
-                - inner(avg(grad(self.u_test)), stress_jump)*self.dS 
+                + alpha/avg(h)*inner(tensor_jump(self.u_test, n), stress_jump)*self.dS
+                - inner(avg(grad(self.u_test)), stress_jump)*self.dS
                 - inner(tensor_jump(self.u_test, n), avg(stress))*self.dS
             )
 
@@ -668,7 +664,7 @@ class QuadraticDragTerm(ShallowWaterMomentumTerm):
             C_D = g_grav * mu_manning**2 / total_h**(1./3.)
 
         if C_D is not None:
-            f += C_D * sqrt(dot(uv_old, uv_old)) * inner(self.u_test, uv) / total_h * self.dx # in the math provided, extra '/h' should be added, Wei
+            f += C_D * sqrt(dot(uv_old, uv_old)) * inner(self.u_test, uv) / total_h * self.dx
         return -f
 
 
@@ -754,7 +750,7 @@ class ContinuitySourceTerm(ShallowWaterContinuityTerm):
         return -f
 
 
-class BathymetryDisplacementMassTerm(ShallowWaterContinuityTerm): # should have been unavailable, temporarily not cancelled, Wei 
+class BathymetryDisplacementMassTerm(ShallowWaterContinuityTerm):
     r"""
     Bathmetry mass displacement term, :math:`\partial \eta / \partial t + \partial \tilde{h} / \partial t`
 
@@ -809,32 +805,45 @@ class BaseShallowWaterEquation(Equation):
         self.add_term(HUDivTerm(*args), 'implicit')
         self.add_term(ContinuitySourceTerm(*args), 'source')
 
-    def update_depth_wd(self, eta): # Wei, added
+    def update_depth_wd(self, solution): # Wei, added
         """
         Returns new total water column depth because of wetting-drying judges
         """
-        if self.nonlin:      
-            total_h = self.bathymetry + eta + self.water_height_displacement(eta)
+        if self.nonlin:
+        
+            if self.wd_alpha is None:
+                #if self.wd_mindep is not None:
+                    # beflow judgement about wd_mindep has been moved to time loop in splver2d
+                    #H = self.bathymetry.dat.data + solution.dat.data[1]        
+                    #H[H < self.wd_mindep] = self.wd_mindep
+                    #total_h = Function(self.bathymetry.function_space())
+                    #tmp = total_h.dat.data
+                    #assert H.shape[0] == tmp.shape[0]
+                    #for i, h_wd in enumerate(H):
+                    #    tmp[i] = h_wd
+                #else:
+                    #total_h = self.bathymetry + solution[2]
+                total_h = self.bathymetry + solution[2]
+            else:
+                total_h = self.bathymetry + solution[2] + self.water_height_displacement(solution)
+
         else:
             total_h = self.bathymetry
 
         return total_h
 
-    def water_height_displacement(self, eta): # Wei
+    def water_height_displacement(self, solution):
         """
         Returns wetting and drying water height discplacement as described in:
         Karna et al.,  2011.
         """
         if self.wd_alpha is None:
-            return 0. 
+            return (self.update_depth_wd(solution) - (self.bathymetry + solution[2])) # Wei
         else:
-            H = self.bathymetry + eta
-            mindep_wd_interface = self.wd_alpha
-            return 2 * mindep_wd_interface**2 / (2 * mindep_wd_interface + abs(H)) + 0.5 * (abs(H) - H) # new formulated function, Wei
-            #return conditional(H < wd_mindep, wd_mindep**2/(2*wd_mindep - H) - H, 0.) # artificial porosity method
-            #return 0.5 * (sqrt(H ** 2 + self.wd_alpha ** 2) - H) # original bathymetry changed method
+            H = self.bathymetry + solution[2]
+            return 0.5 * (sqrt(H ** 2 + self.wd_alpha ** 2) - H)
 
-    def WaterDisplacementMassTerm(self, solution): # Wei
+    def ElevationDisplacementMassTerm(self, solution):
         """
         Elevation mass displacement term, :math:`\partial \eta / \partial t + \partial \tilde{h} / \partial t`
 
@@ -853,9 +862,10 @@ class BaseShallowWaterEquation(Equation):
 
             u_test, eta_test = TestFunctions(self.function_space)
   
-            f += inner(self.water_height_displacement(solution[2]), eta_test)*self.dx
+            f += inner(self.water_height_displacement(solution), eta_test)*self.dx
             
         return f
+
 
     def residual_uv_eta(self, label, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions): # Wei
         f = 0
@@ -897,14 +907,14 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         self.add_momentum_terms(u_test, u_space, eta_space,
                                 bathymetry, nonlin, wd_alpha, wd_mindep,
                                 include_grad_div_viscosity_term,
-                                include_grad_depth_viscosity_term) 
+                                include_grad_depth_viscosity_term)
 
         self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha, wd_mindep)
 
     def mass_term(self, solution):
-        """if modify eta, need handle here""" # Wei
+        """if modify eta, need handle here"""
         f = super(ShallowWaterEquations, self).mass_term(solution)
-        f += self.WaterDisplacementMassTerm(solution) # Wei
+        f += self.ElevationDisplacementMassTerm(solution) # Wei
         return f
 
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
@@ -913,7 +923,7 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         else:
             uv, eta = split(solution)
         uv_old, eta_old = split(solution_old)
-        total_h = self.update_depth_wd(eta_old)
+        total_h = self.update_depth_wd(solution_old)
         #uv, eta = solution.split()
         return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions) # Wei
 
@@ -928,8 +938,6 @@ class ModeSplit2DEquations(BaseShallowWaterEquation):
     def __init__(self, function_space,
                  bathymetry,
                  nonlin=True,
-                 wd_alpha=None,
-                 wd_mindep=None,
                  include_grad_div_viscosity_term=False,
                  include_grad_depth_viscosity_term=True):
         """
@@ -949,12 +957,12 @@ class ModeSplit2DEquations(BaseShallowWaterEquation):
         u_space, eta_space = function_space.split()
 
         self.add_momentum_terms(u_test, u_space, eta_space,
-                                bathymetry, nonlin, wd_alpha, wd_mindep,
+                                bathymetry,
+                                nonlin,
                                 include_grad_div_viscosity_term,
-                                include_grad_depth_viscosity_term) # 'wd*' added, Wei
+                                include_grad_depth_viscosity_term)
 
-        #self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin)
-        self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha, wd_mindep) # Wei
+        self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin)
 
     def add_momentum_terms(self, *args):
         self.add_term(ExternalPressureGradientTerm(*args), 'implicit')
@@ -967,8 +975,7 @@ class ModeSplit2DEquations(BaseShallowWaterEquation):
         else:
             uv, eta = split(solution)
         uv_old, eta_old = split(solution_old)
-        total_h = self.update_depth_wd(eta_old)
-        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions) # Wei
+        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
 
 
 class FreeSurfaceEquation(BaseShallowWaterEquation):
@@ -978,8 +985,7 @@ class FreeSurfaceEquation(BaseShallowWaterEquation):
     def __init__(self, eta_test, eta_space, u_space,
                  bathymetry,
                  nonlin=True,
-                 wd_alpha=None,
-                 wd_mindep=None):
+                 wd_alpha=None):
         """
         :arg eta_test: test function of the elevation function space
         :arg eta_space: elevation function space
@@ -990,14 +996,13 @@ class FreeSurfaceEquation(BaseShallowWaterEquation):
         :kwarg bool nonlin: If False defines the linear shallow water equations
         :kwarg wd_alpha: wetting-drying parameter
         """
-        super(FreeSurfaceEquation, self).__init__(eta_space, bathymetry, nonlin, wd_alpha, wd_mindep)
-        self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha, wd_mindep) # 'wd_mindep' added, Wei
-        # self.bathymetry_displacement_mass_term = BathymetryDisplacementMassTerm(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha) # cancelled, Wei
+        super(FreeSurfaceEquation, self).__init__(eta_space, bathymetry, nonlin, wd_alpha)
+        self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha)
+        self.bathymetry_displacement_mass_term = BathymetryDisplacementMassTerm(eta_test, eta_space, u_space, bathymetry, nonlin, wd_alpha)
 
     def mass_term(self, solution):
         f = super(ShallowWaterEquations, self).mass_term(solution)
-        #f += self.bathymetry_displacement_mass_term.residual(solution)
-        f += self.WaterDisplacementMassTerm(solution)
+        f += self.bathymetry_displacement_mass_term.residual(solution)
         return f
 
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
@@ -1005,8 +1010,7 @@ class FreeSurfaceEquation(BaseShallowWaterEquation):
         uv_old = fields_old['uv']
         eta = solution
         eta_old = solution_old
-        total_h = self.update_depth_wd(eta_old)
-        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions)
+        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
 
 
 class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
@@ -1018,7 +1022,6 @@ class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
                  bathymetry,
                  nonlin=True,
                  wd_alpha=None,
-                 wd_mindep=None,
                  include_grad_div_viscosity_term=False,
                  include_grad_depth_viscosity_term=True):
         """
@@ -1035,16 +1038,15 @@ class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
         :kwarg bool include_grad_depth_viscosity_term: If True includes grad(H) term
             in viscosity operator
         """
-        super(ShallowWaterMomentumEquation, self).__init__(u_space, bathymetry, nonlin, wd_alpha, wd_mindep)
+        super(ShallowWaterMomentumEquation, self).__init__(u_space, bathymetry, nonlin, wd_alpha)
         self.add_momentum_terms(eta_test, u_space, eta_space,
-                                bathymetry, nonlin, wd_alpha, wd_mindep,
+                                bathymetry, nonlin, wd_alpha,
                                 include_grad_div_viscosity_term,
-                                include_grad_depth_viscosity_term) # 'wd_mindep' added, Wei
+                                include_grad_depth_viscosity_term)
 
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
         uv = solution
         uv_old = solution_old
         eta = fields['eta']
         eta_old = fields_old['eta']
-        total_h = self.update_depth_wd(eta_old)
-        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, total_h, bnd_conditions)
+        return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)

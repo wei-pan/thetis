@@ -126,6 +126,7 @@ class ForwardEuler(TimeIntegrator):
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
         self.dt_const.assign(dt)
+        self.dt = self.dt_const.dat.data[0] # Wei
         if update_forcings is not None:
             update_forcings(t + self.dt)
         self.solution_old.assign(self.solution)
@@ -212,14 +213,17 @@ class CrankNicolson(TimeIntegrator):
 
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
+        self.dt = self.dt_const.dat.data[0] # Wei
         if update_forcings is not None:
             update_forcings(t + self.dt)
         self.solution_old.assign(self.solution)
         self.solver.solve()
+        uv1, elev1 = self.solution_old.split()
+        uv2, elev2 = self.solution.split()
         # shift time
         for k in self.fields_old:
             self.fields_old[k].assign(self.fields[k])
-
+        
 
 class SteadyState(TimeIntegrator):
     """
@@ -262,6 +266,7 @@ class SteadyState(TimeIntegrator):
 
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
+        self.dt = self.dt_const.dat.data[0] # Wei
         if update_forcings is not None:
             update_forcings(t + self.dt)
         self.solver.solve()
@@ -401,6 +406,7 @@ class PressureProjectionPicard(TimeIntegrator):
 
     def advance(self, t, updateForcings=None):
         """Advances equations for one time step."""
+        self.dt = self.dt_const.dat.data[0] # Wei
         if updateForcings is not None:
             updateForcings(t + self.dt)
         self.solution_old.assign(self.solution)
@@ -557,6 +563,7 @@ class LeapFrogAM3(TimeIntegrator):
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
         if self._nontrivial:
+            self.dt = self.dt_const.dat.data[0] # Wei
             if update_forcings is not None:
                 update_forcings(t + self.dt)
             self.predict()
@@ -703,6 +710,7 @@ class SSPRK22ALE(TimeIntegrator):
 
         This must be called prior to updating mesh geometry.
         """
+        self.dt = self.dt_const.dat.data[0] # Wei
         if update_forcings is not None:
             update_forcings(t + self.c[i_stage]*self.dt)
         if i_stage == 0:
