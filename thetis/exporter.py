@@ -102,7 +102,6 @@ class VTKExporter(ExporterBase):
         """Exports given function to disk"""
         assert self.fs_visu.max_work_functions == 1
         tmp_proj_func = self.fs_visu.get_work_function()
-
         # NOTE tmp function must be invariant as the projector is built only once
         op = self.cast_operators.get(function)
         if self.project_output:
@@ -115,9 +114,7 @@ class VTKExporter(ExporterBase):
                 op = Interpolator(function, tmp_proj_func)
                 self.cast_operators[function] = op
             op.interpolate()
-
         coordfunc = function.function_space().mesh().coordinates
-
         if coordfunc not in self.outfile._output_functions and self.coords_dg is not None:
             # hacky workaround to avoid allocating dg coord function in each File object
             self.outfile._output_functions[coordfunc] = self.coords_dg

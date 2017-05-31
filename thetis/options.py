@@ -6,6 +6,7 @@ from __future__ import absolute_import
 from .utility import *
 from .turbulence import GLSModelOptions
 
+
 class ModelOptions(AttrDict, FrozenClass):
     """
     Stores all circulation model options
@@ -244,19 +245,20 @@ class ModelOptions(AttrDict, FrozenClass):
 
         Bottom stress is :math:`\tau_b/\rho_0 = -g \mu^2 |\mathbf{u}|\mathbf{u}/H^{1/3}`
         """
+        self.constant_mindep = False # Wei
+        """If False, alpha is varied, based on wd_mindep; if True, alpha equals to wd_mindep"""
 
-        self.constant_alpha = False #added, Wei
-        """If False, alpha is varied, based on self.wd_mindep"""
+        self.thin_film = False # Wei
+        """If True, thin-film wetting-drying scheme is used"""
         
-        self.wd_alpha = None
+        self.depth_wd_interface = Constant(1E-8) # intermediate Wetting-drying parameter, controlled by wd_mindep
         r"""Coefficient or None: Wetting-drying parameter :math:`\alpha`
-        
-        Used in bathymetry displacement function that ensures positive water depths. Unit is meters.
-        Default is None, which disables wetting and drying.
-        """
 
-        self.wd_mindep = None # added, Wei
-        """Parameter of the thin-film wetting-drying scheme"""
+        Used to ensure artificial positive water depths. Unit is meters.
+        Default is None, controlled by wd_mindep; facilitate users' understanding and prescription
+        """
+        self.wd_mindep = 0.01 # Wei
+        """Parameter of the thin-film wetting-drying scheme. Unit is meters."""
 
         self.h_diffusivity = None
         """Coefficient or None: Background horizontal diffusivity for tracers"""
@@ -270,6 +272,8 @@ class ModelOptions(AttrDict, FrozenClass):
         """2D Coefficient or None: Coriolis parameter"""
         self.wind_stress = None
         """Coefficient or None: Stress at free surface (2D vector function)"""
+        self.atmospheric_pressure = None
+        """Coefficient or None: Atmospheric pressure at free surface, in pascals"""
         self.uv_source_2d = None
         """Coefficient or None: source term for 2D momentum equation"""
         self.uv_source_3d = None

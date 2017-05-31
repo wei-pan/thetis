@@ -218,12 +218,10 @@ class CrankNicolson(TimeIntegrator):
             update_forcings(t + self.dt)
         self.solution_old.assign(self.solution)
         self.solver.solve()
-        uv1, elev1 = self.solution_old.split()
-        uv2, elev2 = self.solution.split()
         # shift time
         for k in self.fields_old:
             self.fields_old[k].assign(self.fields[k])
-        
+
 
 class SteadyState(TimeIntegrator):
     """

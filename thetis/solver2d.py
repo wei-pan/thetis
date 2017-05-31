@@ -87,7 +87,7 @@ class FlowSolver2d(FrozenClass):
 
         self.dt = None
         """Time step"""
-        
+
         self.options = ModelOptions()
         """
         Dictionary of all options. A :class:`.ModelOptions` object.
@@ -125,7 +125,7 @@ class FlowSolver2d(FrozenClass):
 
         self.bnd_functions = {'shallow_water': {}}
 
-        self._isfrozen = False
+        self._isfrozen = True
 
     def compute_time_step(self, u_scale=Constant(0.0)):
         r"""
@@ -276,9 +276,6 @@ class FlowSolver2d(FrozenClass):
         """
         Creates shallow water equations
         """
-        if self.options.wd_alpha is not None:
-            self.options.wd_alpha = self.get_alpha(self.fields.bathymetry_2d.dat.data.min()) # Wei, 16/05/2017
-
         if not hasattr(self, 'U_2d'):
             self.create_function_spaces()
         self._isfrozen = False
@@ -294,11 +291,7 @@ class FlowSolver2d(FrozenClass):
         self.eq_sw = shallowwater_eq.ShallowWaterEquations(
             self.fields.solution_2d.function_space(),
             self.fields.bathymetry_2d,
-            nonlin=self.options.nonlin,
-            wd_alpha=self.options.wd_alpha, 
-            wd_mindep=self.options.wd_mindep,
-            include_grad_div_viscosity_term=self.options.include_grad_div_viscosity_term,
-            include_grad_depth_viscosity_term=self.options.include_grad_depth_viscosity_term
+            self.options
         )
         self.eq_sw.bnd_functions = self.bnd_functions['shallow_water']
         self._isfrozen = True  # disallow creating new attributes
@@ -327,6 +320,7 @@ class FlowSolver2d(FrozenClass):
             'uv_lax_friedrichs': self.options.uv_lax_friedrichs,
             'coriolis': self.options.coriolis,
             'wind_stress': self.options.wind_stress,
+            'atmospheric_pressure': self.options.atmospheric_pressure,
             'uv_source': self.options.uv_source_2d,
             'elev_source': self.options.elev_source_2d, }
 
@@ -384,10 +378,7 @@ class FlowSolver2d(FrozenClass):
             u_test = TestFunction(self.function_spaces.U_2d)
             self.eq_mom = shallowwater_eq.ShallowWaterMomentumEquation(
                 u_test, self.function_spaces.H_2d, self.function_spaces.U_2d,
-                self.fields.bathymetry_2d,
-                nonlin=self.options.nonlin,
-                include_grad_div_viscosity_term=self.options.include_grad_div_viscosity_term,
-                include_grad_depth_viscosity_term=self.options.include_grad_depth_viscosity_term
+                options=self.options
             )
             self.eq_mom.bnd_functions = self.bnd_functions['shallow_water']
             self.timestepper = timeintegrator.PressureProjectionPicard(self.eq_sw, self.eq_mom, self.fields.solution_2d,
@@ -416,7 +407,6 @@ class FlowSolver2d(FrozenClass):
                                                           solver_parameters_dirk=sp_impl)
         else:
             raise Exception('Unknown time integrator type: '+str(self.options.timestepper_type))
-
         print_output('Using time integrator: {:}'.format(self.timestepper.__class__.__name__))
         self._isfrozen = True  # disallow creating new attributes
 
@@ -706,7 +696,6 @@ class FlowSolver2d(FrozenClass):
         Also evaluates all callbacks set to 'export' interval.
         """
         self.callbacks.evaluate(mode='export')
-   
         for key in self.exporters:
             self.exporters[key].export()
 
@@ -789,14 +778,14 @@ class FlowSolver2d(FrozenClass):
 
         :arg H0: Minimum water depth
         """     
-        if H0 >= 0.:
-            return Constant(0.)
-        elif not self.options.constant_alpha:
-            return Constant(np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep) # new formulated function, Wei
-            #return Constant(np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep) # artificial porosity method
-            #return Constant(np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0))) # original bathymetry changed method
+        if H0 > 0.:
+            return 0.
+        elif not self.options.constant_mindep:
+            return np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep # new formulated function, Wei
+            #return np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep # artificial porosity method
+            #return np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0)) # original bathymetry changed method
         else:
-            return Constant(self.options.wd_alpha)
+            return self.options.wd_mindep
 
     def thacker_compare(self, t, eta):
         # Print prescribed results, for Thacker # Wei
@@ -843,6 +832,7 @@ class FlowSolver2d(FrozenClass):
         # TODO I think export function is obsolete as callbacks are in place
         if not self._initialized:
             self.initialize()
+
         t_epsilon = 1.0e-5
         cputimestamp = time_mod.clock()
         next_export_t = self.simulation_time + self.options.t_export
@@ -867,78 +857,61 @@ class FlowSolver2d(FrozenClass):
             # uv & eta modified based on the wetting-drying method: a thin film # Wei
             self.solution_2d_old.assign(self.fields.solution_2d) # for exporting with adaptive time stepping, Wei
             self.timestepper.dt_const.assign(self.set_time_step(self.fields.solution_2d)) # Wei
-            if self.options.wd_alpha is None:
-                if self.options.wd_mindep is not None: 
-                    # this thin-film wetting-drying scheme extremely relies on the high resolution at wetting-drying front
-                    # has been benchmarked by Thacker test, but needs further benchmark by orther tests, Wei
-                    uv_2d, elev_2d = self.fields.solution_2d.split()
-                    native_space = uv_2d.function_space()
-                    visu_space = exporter.get_visu_space(native_space)
-                    tmp_proj_func = visu_space.get_work_function()
-                    Interpolator(uv_2d, tmp_proj_func).interpolate()
-                    visu_space.restore_work_function(tmp_proj_func)
-                    UV = tmp_proj_func.dat.data
-                    H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data 
-
-                    ind = np.where(H[:] <= self.options.wd_mindep)[0]
-                    H[ind] = self.options.wd_mindep
-                    elev_2d.dat.data[ind] = (H - self.fields.bathymetry_2d.dat.data)[ind]
-                    #uv_2d.dat.data[ind] = [0., 0.]
-                    #UV[ind] = [0., 0.]
-                    #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wd_mindep, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
-                    #uv_2d.project(tmp_proj_func)
-
-                    #UV[H <= self.options.wd_mindep] = [0., 0.]
-                    #H[H < self.options.wd_mindep] = self.options.wd_mindep
-
-                    #eta_vector = self.fields.solution_2d.dat.data[1]
-                    #tmp_vector = H - self.fields.bathymetry_2d.dat.data
-                
-                    #assert tmp_vector.shape[0] == eta_vector.shape[0]
-                    #for i, ele in enumerate(tmp_vector):
-                    #    eta_vector[i] = ele
-
-                    #for j, uv in enumerate(UV):
-                    #    self.fields.solution_2d.dat.data[0][j] = uv
-
-                    #uv_2d.assign(tmp_proj_func)
-                    #uv_2d.project(tmp_proj_func)
-
-                    #self.fields.solution_2d = self.SlopeLimiter(self.fields.solution_2d)
-                    self.fields.solution_2d = self.SlopeModification(self.fields.solution_2d)
+            uv_2d, elev_2d = self.fields.solution_2d.split()
+            H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data
+            if self.options.thin_film: 
+                # this thin-film wetting-drying scheme extremely relies on the high resolution at wetting-drying front
+                # has been benchmarked by Thacker test, but needs further work by orther tests, Wei    
+                visu_space = exporter.get_visu_space(uv_2d.function_space())
+                tmp_proj_func = visu_space.get_work_function()
+                Interpolator(uv_2d, tmp_proj_func).interpolate()
+                visu_space.restore_work_function(tmp_proj_func)
+                UV = tmp_proj_func.dat.data
+                ind = np.where(H[:] <= self.options.wd_mindep)[0]
+                H[ind] = self.options.wd_mindep
+                elev_2d.dat.data[ind] = (H - self.fields.bathymetry_2d.dat.data)[ind]
+                #UV[ind] = [0., 0.]
+                #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wd_mindep, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
+                #if self.options.element_family == 'rt-dg':
+                #    uv_2d.project(tmp_proj_func) 
+                #else:
+                #    uv_2d.assign(tmp_proj_func) 
+                #self.fields.solution_2d = self.SlopeLimiter(self.fields.solution_2d)
+                self.fields.solution_2d = self.SlopeModification(self.fields.solution_2d)
             else:
-                uv_2d, elev_2d = self.fields.solution_2d.split()
-                H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data
                 H_min = H.min()
-                self.options.wd_alpha.assign(self.get_alpha(H_min)) 
-                print_output('alpha = {:}'.format(self.options.wd_alpha.dat.data))
+                self.options.depth_wd_interface.assign(self.get_alpha(H_min))
+                print_output('alpha = {:}'.format(self.options.depth_wd_interface.dat.data))
 
             self.timestepper.advance(self.simulation_time, update_forcings)
 
-            #if self.options.wd_alpha is not None: # only for thacker test, Wei
+            #if not self.options.thin_film: # only for thacker test, Wei
                 #t = self.simulation_time + self.dt
                 #self.thacker_compare(t, elev_2d)
-                #uv11, ele11 = split(self.fields.solution_2d)
-                #self.thacker_compare(t, ele11) # to see what the difference between split(splution) and solution.split() is
 
             # Move to next time step
             self.iteration += 1
-            #self.simulation_time = self.iteration*self.dt # it seems be not appropriate for adaptive time step? Wei; because no adaptive temporarily, could be added latter
+            #self.simulation_time = self.iteration*self.dt # not appropriate for adaptive time step, Wei
             self.simulation_time = self.simulation_time + self.dt
             self.callbacks.evaluate(mode='timestep')
 
             # Write the solution to file
             if self.simulation_time >= next_export_t - t_epsilon: # has been modified to export properly when adaptive timestepping; seems higher time cost, Wei, 58/05/2017
+                self.exchange_tmp.assign(self.fields.solution_2d)
                 if self.options.dt is not None and self.options.t_export % self.options.dt <= 1E-10:
+                    H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data
+                    ind = np.where(H[:] <= 0.)[0]
+                    elev_2d.dat.data[ind] = 1E-6 - self.fields.bathymetry_2d.dat.data[ind]
                     self.export()
                 else:
                     fac = (next_export_t - (self.simulation_time - self.dt)) / self.dt
-                    tmp = fac * (self.fields.solution_2d - self.solution_2d_old) + self.solution_2d_old
-                    self.export_tmp.assign(tmp)
-                    self.exchange_tmp.assign(self.fields.solution_2d)
-                    self.fields.solution_2d.assign(self.export_tmp)
+                    self.fields.solution_2d.assign(fac * (self.fields.solution_2d - self.solution_2d_old) + self.solution_2d_old)
+                    #elev_2d.project(elev_2d + self.eq_sw.water_height_displacement(elev_2d)) # alternatively, but a little worse, Wei, 31/05/2017
+                    H = self.fields.bathymetry_2d.dat.data + elev_2d.dat.data
+                    ind = np.where(H[:] <= 0.)[0]
+                    elev_2d.dat.data[ind] = 1E-6 - self.fields.bathymetry_2d.dat.data[ind]
                     self.export()
-                    self.fields.solution_2d.assign(self.exchange_tmp)
+                self.fields.solution_2d.assign(self.exchange_tmp)
 
                 self.i_export += 1
                 next_export_t += self.options.t_export
