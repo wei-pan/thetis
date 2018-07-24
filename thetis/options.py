@@ -527,6 +527,18 @@ class ModelOptions2d(CommonModelOptions):
         Advects tracer in the associated (constant) velocity field.
         """).tag(config=True)
 
+    anisotropic_adaptation = Bool(False, help="""
+	Perform anisotropic mesh adaptation
+
+	Specify metric for adaptation by setting `anisotropic_adaptation_metric`.
+	""").tag(config=True)
+
+    anisotropic_adaptation_metric = Unicode(None, allow_none=True, help="""
+	Specify metric to be used in anisotropic adaptation
+
+	Choose from {'Hessian', 'DWP', 'DWR'}.
+	""").tag(config=True)	# TODO: Incorporate these functionalities
+
 
 @attach_paired_options("timestepper_type",
                        PairedEnum([('LeapFrog', ExplicitTimestepperOptions3d),
