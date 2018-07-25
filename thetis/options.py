@@ -539,6 +539,12 @@ class ModelOptions2d(CommonModelOptions):
 	Choose from {'Hessian', 'DWP', 'DWR'}.
 	""").tag(config=True)	# TODO: Incorporate these functionalities
 
+    tracer_family = Unicode('dg', help="""
+        Specify whether tracer should be continuous or discontinous
+
+        Choose from 'dg' and 'cg'.
+        """).tag(config=True)
+
 
 @attach_paired_options("timestepper_type",
                        PairedEnum([('LeapFrog', ExplicitTimestepperOptions3d),
