@@ -656,8 +656,12 @@ class EdgeResidualCallback(ErrorEstimateCallback):
         """
         def edge_residual():
             if solver_obj.options.tracer_only:
-                R = Function(solver_obj.solution_2d.function_space(), name="residual")
-                res = solver_obj.timestepper.tracer_integrator.edge_residual()
+                R = Function(solver_obj.fields.tracer_2d.function_space(), name="residual")
+                tracer_integrator = solver_obj.timestepper.tracer_integrator(solver_obj.eq_tracer,
+                                                                             solver_obj.fields.tracer_2d,
+                                                                             solver_obj.fields,
+                                                                             solver_obj.options.timestep)
+                res = tracer_integrator.edge_residual()
                 R.interpolate(res)
                 return R
             else:
