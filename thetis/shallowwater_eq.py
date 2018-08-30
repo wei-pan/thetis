@@ -1064,7 +1064,27 @@ class HUDivResidual(ShallowWaterContinuityResidualTerm):
         return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions):
-        return None
+        total_h = self.get_total_depth(eta_old)
+
+        f = 0
+        slip = False
+        mesh = uv.function_space().mesh()
+        P0 = FunctionSpace(mesh, "DG", 0)
+        p0_test = TestFunction(P0)
+
+        for bnd_marker in self.boundary_markers:
+            funcs = bnd_conditions.get(bnd_marker)
+            ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+            if 'un' in funcs:
+               f += -total_h*dot(uv - funcs['un'], self.normal)*p0_test*ds_bnd
+               slip = True
+            else:
+               f += -total_h*dot(uv, self.normal)*p0_test*ds_bnd
+        if slip:
+            f += Constant(0.5) * jump(-total_h*uv, self.normal) * (p0_test('+') + p0_test('-')) * dS
+            return Function(P0).interpolate(assemble(-f))
+        else:
+            raise NotImplementedError	# TODO: consider other BCs
 
 
 class HorizontalAdvectionResidual(ShallowWaterMomentumResidualTerm):
@@ -1260,7 +1280,7 @@ class TurbineDragResidual(ShallowWaterMomentumResidualTerm):
 
         if self.options.tidal_turbine_farms != {}:
             for subdomain_id, farm_options in self.options.tidal_turbine_farms.items():
-                indicator = assemble(p0_test * dx(subdomain_id))
+                indicator = assemble(p0_test/CellVolume(mesh) * dx(subdomain_id))
                 density = farm_options.turbine_density
                 C_T = farm_options.turbine_options.thrust_coefficient
                 A_T = pi * (farm_options.turbine_options.diameter / 2.) ** 2
