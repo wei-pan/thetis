@@ -1131,7 +1131,7 @@ class HorizontalViscosityResidual(ShallowWaterMomentumResidualTerm):
             else:
                 stress = nu*grad(uv)
 
-            f = div(stress)
+            f = -div(stress)
 
             if self.options.use_grad_depth_viscosity_term:
                 f += -dot(grad(total_h)/total_h, stress)
