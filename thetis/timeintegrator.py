@@ -250,15 +250,15 @@ class CrankNicolson(TimeIntegrator):
         else:
             # solve the full nonlinear residual form
             u_nl = u
-        bnd = bnd_conditions
+        self.bnd = bnd_conditions
         f = self.fields
         f_old = self.fields_old
 
         # Crank-Nicolson
         theta_const = Constant(theta)
         self.F = (self.equation.mass_term(u) - self.equation.mass_term(u_old)
-                  - self.dt_const*(theta_const*self.equation.residual('all', u, u_nl, f, f, bnd)
-                                   + (1-theta_const)*self.equation.residual('all', u_old, u_old, f_old, f_old, bnd))
+                  - self.dt_const*(theta_const*self.equation.residual('all', u, u_nl, f, f, self.bnd)
+                                   + (1-theta_const)*self.equation.residual('all', u_old, u_old, f_old, f_old, self.bnd))
                   )
 
         self.update_solver()
@@ -318,10 +318,10 @@ class CrankNicolson(TimeIntegrator):
             mom_res = (uv - uv_old) / self.dt_const
             cty_res = (eta - eta_old) / self.dt_const
 
-            mom_res += -theta_const * self.momentum_residual.cell_residual(label, sol, sol_nl, f, f, self.bnd_conditions)
-            mom_res += -(1 - theta_const) * self.momentum_residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd_conditions)
-            cty_res += -theta_const * self.continuity_residual.cell_residual(label, sol, sol_nl, f, f_old, self.bnd_conditions)
-            cty_res += -(1 - theta_const) * self.continuity_residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd_conditions)
+            mom_res += -theta_const * self.momentum_residual.cell_residual(label, sol, sol_nl, f, f, self.bnd)
+            mom_res += -(1 - theta_const) * self.momentum_residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd)
+            cty_res += -theta_const * self.continuity_residual.cell_residual(label, sol, sol_nl, f, f_old, self.bnd)
+            cty_res += -(1 - theta_const) * self.continuity_residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd)
 
             return mom_res, cty_res
 
@@ -330,8 +330,8 @@ class CrankNicolson(TimeIntegrator):
             q_old = self.solution_old
             res = (q - q_old) / self.dt_const
 
-            res += -theta_const * self.residual.cell_residual(label, sol, sol_nl, f, f, self.bnd_conditions)
-            res += -(1 - theta_const) * self.residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd_conditions)
+            res += -theta_const * self.residual.cell_residual(label, sol, sol_nl, f, f, self.bnd)
+            res += -(1 - theta_const) * self.residual.cell_residual(label, sol_old, sol_old, f_old, f_old, self.bnd)
 
             return res
 

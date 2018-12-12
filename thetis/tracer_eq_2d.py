@@ -212,8 +212,16 @@ class HorizontalDiffusionTerm(TracerTerm):
             # assuming k_max/k_min=2, Theta=pi/3
             # sigma = 6.93 = 3.5*p*(p+1)
 
+            # If anisotropic mesh adaptivity is applied, we may have a situation where
+            # Theta becomes very small. In the extreme case of a 'long, thin' triangular
+            # element with anisotropy a, small angle approximations and the Cosine rule
+            # give the approximation cot(Theta) = a.
+            # assuming k_max/k_min=2
+            # sigma = 400 = 200*p*(p+1)
+
             degree_h = self.function_space.ufl_element().degree()
-            sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
+            #sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
+            sigma = 200*degree_h*(degree_h + 1)/self.cellsize
             if degree_h == 0:
                 sigma = 1.5 / self.cellsize
             alpha = avg(sigma)
