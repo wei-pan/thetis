@@ -9,6 +9,7 @@ from . import rungekutta
 from . import implicitexplicit
 from . import coupled_timeintegrator_2d
 from . import tracer_eq_2d
+from . import tracer_eq_2d_residuals
 import weakref
 import time as time_mod
 from mpi4py import MPI
@@ -239,6 +240,9 @@ class FlowSolver2d(FrozenClass):
             self.options
         )
         self.eq_sw.bnd_functions = self.bnd_functions['shallow_water']
+        if self.options.compute_residuals:
+            assert(not(self.options.compute_residuals_tracer))
+            # TODO: Pass in residuals for SWEs
         if self.options.solve_tracer:
             self.fields.tracer_2d = Function(self.function_spaces.Q_2d, name='tracer_2d')
             self.eq_tracer = tracer_eq_2d.TracerEquation2D(self.function_spaces.Q_2d, bathymetry=self.fields.bathymetry_2d,
@@ -247,6 +251,10 @@ class FlowSolver2d(FrozenClass):
                 self.tracer_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.Q_2d)
             else:
                 self.tracer_limiter = None
+            if self.options.compute_residuals_tracer:
+                self.residual = tracer_eq_2d_residuals.TracerResidual2D(self.function_spaces.Q_2d,
+                                                                        bathymetry=self.fields.bathymetry_2d,
+                                                                        use_lax_friedrichs=self.options.use_lax_friedrichs_tracer)
 
         self._isfrozen = True  # disallow creating new attributes
 
@@ -285,7 +293,7 @@ class FlowSolver2d(FrozenClass):
                                                   solver_parameters=self.options.timestepper_options.solver_parameters)
         elif self.options.timestepper_type == 'ForwardEuler':
             self.timestepper = timeintegrator.ForwardEuler(self.eq_sw, self.fields.solution_2d,
-                                                           fields, self.dt,
+                                                           fields, self.dt, residual=self.residual,
                                                            bnd_conditions=self.bnd_functions['shallow_water'],
                                                            solver_parameters=self.options.timestepper_options.solver_parameters)
         elif self.options.timestepper_type == 'BackwardEuler':
@@ -298,7 +306,7 @@ class FlowSolver2d(FrozenClass):
                 self.timestepper = coupled_timeintegrator_2d.CoupledCrankNicolson2D(weakref.proxy(self))
             else:
                 self.timestepper = timeintegrator.CrankNicolson(self.eq_sw, self.fields.solution_2d,
-                                                                fields, self.dt,
+                                                                fields, self.dt, residual=self.residual,
                                                                 bnd_conditions=self.bnd_functions['shallow_water'],
                                                                 solver_parameters=self.options.timestepper_options.solver_parameters,
                                                                 semi_implicit=self.options.timestepper_options.use_semi_implicit_linearization,
@@ -315,7 +323,7 @@ class FlowSolver2d(FrozenClass):
                                                  solver_parameters=self.options.timestepper_options.solver_parameters)
         elif self.options.timestepper_type == 'SteadyState':
             self.timestepper = timeintegrator.SteadyState(self.eq_sw, self.fields.solution_2d,
-                                                          fields, self.dt,
+                                                          fields, self.dt, residual=self.residual,
                                                           bnd_conditions=self.bnd_functions['shallow_water'],
                                                           solver_parameters=self.options.timestepper_options.solver_parameters)
         elif self.options.timestepper_type == 'PressureProjectionPicard':

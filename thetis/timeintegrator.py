@@ -68,8 +68,7 @@ class TimeIntegrator(TimeIntegratorBase):
         self.solver_parameters = {}
         self.solver_parameters.update(solver_parameters)
 
-        if residual is not None:
-            self.residual = residual
+        self.residual = residual
 
     def set_dt(self, dt):
         """Update time step"""
@@ -81,7 +80,7 @@ class ForwardEuler(TimeIntegrator):
     """Standard forward Euler time integration scheme."""
     cfl_coeff = 1.0
 
-    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, solver_parameters={}):
+    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, residual=None, solver_parameters={}):
         """
         :arg equation: the equation to solve
         :type equation: :class:`Equation` object
@@ -92,7 +91,7 @@ class ForwardEuler(TimeIntegrator):
         :kwarg dict bnd_conditions: Dictionary of boundary conditions passed to the equation
         :kwarg dict solver_parameters: PETSc solver options
         """
-        super(ForwardEuler, self).__init__(equation, solution, fields, dt, solver_parameters)
+        super(ForwardEuler, self).__init__(equation, solution, fields, dt, residual, solver_parameters)
         self.solution_old = Function(self.equation.function_space)
 
         # create functions to hold the values of previous time step
@@ -161,7 +160,7 @@ class CrankNicolson(TimeIntegrator):
     """Standard Crank-Nicolson time integration scheme."""
     cfl_coeff = CFL_UNCONDITIONALLY_STABLE
 
-    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, solver_parameters={}, theta=0.5, semi_implicit=False):
+    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, residual=None, solver_parameters={}, theta=0.5, semi_implicit=False):
         """
         :arg equation: the equation to solve
         :type equation: :class:`Equation` object
@@ -174,7 +173,7 @@ class CrankNicolson(TimeIntegrator):
         :kwarg float theta: Implicitness parameter, default 0.5
         :kwarg bool semi_implicit: If True use a linearized semi-implicit scheme
         """
-        super(CrankNicolson, self).__init__(equation, solution, fields, dt, solver_parameters)
+        super(CrankNicolson, self).__init__(equation, solution, fields, dt, residual, solver_parameters)
         self.solver_parameters.setdefault('snes_monitor', False)
         if semi_implicit:
             self.solver_parameters.setdefault('snes_type', 'ksponly')
@@ -297,7 +296,7 @@ class SteadyState(TimeIntegrator):
     """
     cfl_coeff = CFL_UNCONDITIONALLY_STABLE
 
-    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, solver_parameters={}):
+    def __init__(self, equation, solution, fields, dt, bnd_conditions=None, residual=None, solver_parameters={}):
         """
         :arg equation: the equation to solve
         :type equation: :class:`Equation` object
@@ -308,7 +307,7 @@ class SteadyState(TimeIntegrator):
         :kwarg dict bnd_conditions: Dictionary of boundary conditions passed to the equation
         :kwarg dict solver_parameters: PETSc solver options
         """
-        super(SteadyState, self).__init__(equation, solution, fields, dt, solver_parameters)
+        super(SteadyState, self).__init__(equation, solution, fields, dt, residual, solver_parameters)
         self.solver_parameters.setdefault('snes_monitor', False)
         self.solver_parameters.setdefault('snes_type', 'newtonls')
         self.F = self.equation.residual('all', solution, solution, fields, fields, bnd_conditions)

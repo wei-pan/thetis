@@ -471,6 +471,11 @@ class CommonModelOptions(FrozenConfigurable):
     horizontal_diffusivity = FiredrakeCoefficient(
         None, allow_none=True, help="Horizontal diffusivity for tracers").tag(config=True)
 
+    compute_residuals = Bool(
+        False, help="Compute strong residuals for shallow water equations").tag(config=True)
+    compute_residuals_tracer = Bool(
+        False, help="Compute strong residuals for tracer equation").tag(config=True)
+
 
 # NOTE all parameters are now case sensitive
 # TODO rename time stepper types? Allow capitals and spaces?

@@ -61,6 +61,7 @@ class CoupledTimeIntegrator2D(timeintegrator.TimeIntegratorBase):
                 solver.eq_sw, self.fields.solution_2d,
                 fields, solver.dt,
                 bnd_conditions=solver.bnd_functions['shallow_water'],
+                residual=solver.residual,
                 solver_parameters=self.options.timestepper_options.solver_parameters,
                 semi_implicit=self.options.timestepper_options.use_semi_implicit_linearization,
                 theta=self.options.timestepper_options.implicitness_theta)
@@ -88,12 +89,14 @@ class CoupledTimeIntegrator2D(timeintegrator.TimeIntegratorBase):
                 self.timesteppers.tracer = self.tracer_integrator(
                     solver.eq_tracer, solver.fields.tracer_2d, fields, solver.dt,
                     bnd_conditions=solver.bnd_functions['tracer'],
+                    residual=solver.residual,
                     solver_parameters=self.options.timestepper_options.solver_parameters_tracer,
                     semi_implicit=self.options.timestepper_options.use_semi_implicit_linearization,
                     theta=self.options.timestepper_options.implicitness_theta)
             else:
                 self.timesteppers.tracer = self.tracer_integrator(solver.eq_tracer, solver.fields.tracer_2d, fields, solver.dt,
                                                                   bnd_conditions=solver.bnd_functions['tracer'],
+                                                                  residual=solver.residual,
                                                                   solver_parameters=self.options.timestepper_options.solver_parameters_tracer,)
 
     def _create_integrators(self):
