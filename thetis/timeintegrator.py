@@ -214,6 +214,9 @@ class CrankNicolson(TimeIntegrator):
 
         self.update_solver()
 
+        if bnd_conditions is not None:
+            self.bnd_conditions = bnd_conditions
+
     def update_solver(self):
         """Create solver objects"""
         # Ensure LU assembles monolithic matrices
@@ -240,6 +243,51 @@ class CrankNicolson(TimeIntegrator):
         # shift time
         for k in sorted(self.fields_old):
             self.fields_old[k].assign(self.fields[k])
+
+    def cell_residual(self):
+        """
+        Evaluate strong residual on element interiors.
+        """
+        u = self.solution
+        u_old = self.solution_old
+        if semi_implicit:
+            # linearize around last timestep using the fact that all terms are
+            # written in the form a(u_nl) u
+            u_nl = u_old
+        else:
+            # solve the full nonlinear residual form
+            u_nl = u
+
+        f = self.fields
+        f_old = self.fields_old
+
+        r = (u - u_old) / self.dt_const
+        r += -theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions)
+        r += -(1 - theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
+
+        return r
+
+    def edge_residual(self):
+        """
+        Evaluate residuals across edges corresponding to fluxes.
+        """
+        u = self.solution
+        u_old = self.solution_old
+        if semi_implicit:
+            # linearize around last timestep using the fact that all terms are
+            # written in the form a(u_nl) u
+            u_nl = u_old
+        else:
+            # solve the full nonlinear residual form
+            u_nl = u
+
+        f = self.fields
+        f_old = self.fields_old
+
+        r = -theta_const * self.residual.edge_residual('all', sol, sol_nl, f, f, self.bnd_conditions)
+        r += -(1 - theta_const) * self.residual.edge_residual('all', sol_old, sol_old, f_old, f_old, self.bnd_conditions)
+
+        return r
 
 
 class SteadyState(TimeIntegrator):
