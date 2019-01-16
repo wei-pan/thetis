@@ -90,9 +90,9 @@ class TracerResidual2D(Equation):
         self.add_term(HorizontalDiffusionResidual(*args), 'explicit')
         self.add_term(SourceResidual(*args), 'source')
 
-    def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
+    def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, tag=''):
         f = 0
-        print("\nCell residual norm contributions:")
+        print("\n{:}Cell residual norm contributions:".format(tag))
         for term in self.select_terms(label):
             r = term.residual_cell(solution, solution_old, fields, fields_old, bnd_conditions)
             if r is not None:
@@ -100,9 +100,9 @@ class TracerResidual2D(Equation):
                 print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
         return f
 
-    def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
+    def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, tag=''):
         f = 0
-        print("\nEdge residual norm contributions:")
+        print("\n{:}Edge residual norm contributions:".format(tag))
         for term in self.select_terms(label):
             r = term.residual_edge(solution, solution_old, fields, fields_old, bnd_conditions)
             if r is not None:

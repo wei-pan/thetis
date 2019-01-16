@@ -262,8 +262,8 @@ class CrankNicolson(TimeIntegrator):
         f_old = self.fields_old
 
         r = (u - u_old) / self.dt_const
-        r += -self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions)
-        r += -(1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
+        r += -self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
+        r += -(1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
 
         return r
 
@@ -284,8 +284,8 @@ class CrankNicolson(TimeIntegrator):
         f = self.fields
         f_old = self.fields_old
 
-        r = -theta_const * self.residual.edge_residual('all', u, u_nl, f, f, self.bnd_conditions)
-        r += -(1 - theta_const) * self.residual.edge_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
+        r = -theta_const * self.residual.edge_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
+        r += -(1 - theta_const) * self.residual.edge_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
 
         return r
 
