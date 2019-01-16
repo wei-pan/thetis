@@ -19,6 +19,8 @@ class HorizontalAdvectionResidual(TracerTerm):
     r"""
     Advection of tracer term, :math:`\bar{\textbf{u}} \cdot \nabla T`
     """
+    name = 'HorizontalAdvection'
+
     def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         if fields_old.get('uv_2d') is not None:
             uv = fields_old['uv_2d']
@@ -37,8 +39,9 @@ class HorizontalDiffusionResidual(TracerTerm):
     Epshteyn and Riviere (2007). Estimation of penalty parameters for symmetric
     interior penalty Galerkin methods. Journal of Computational and Applied
     Mathematics, 206(2):843-872. http://dx.doi.org/10.1016/j.cam.2006.08.029
-
     """
+    name = 'HorizontalDiffusion'
+
     def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         if fields_old.get('diffusivity_h') is not None:
             diffusivity_h = fields_old['diffusivity_h']
@@ -58,6 +61,8 @@ class SourceResidual(TracerTerm):
     """
     Generic source term
     """
+    name = 'Source'
+
     def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         source = fields_old.get('source')
         if source is not None:
