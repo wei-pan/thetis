@@ -114,6 +114,9 @@ class ForwardEuler(TimeIntegrator):
 
         self.update_solver()
 
+        if bnd_conditions is not None:
+            self.bnd_conditions = bnd_conditions
+
     def update_solver(self):
         prob = LinearVariationalProblem(self.A, self.L, self.solution)
         self.solver = LinearVariationalSolver(prob, options_prefix=self.name,
@@ -135,6 +138,23 @@ class ForwardEuler(TimeIntegrator):
         # shift time
         for k in sorted(self.fields_old):
             self.fields_old[k].assign(self.fields[k])
+
+    def cell_residual(self):
+        """
+        Evaluate strong residual on element interiors.
+        """
+        r = (self.solution - self.solution_old) / self.dt_const
+        r += -self.residual.cell_residual('all', self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
+
+        return r
+
+    def edge_residual(self):
+        """
+        Evaluate residuals across edges corresponding to fluxes.
+        """
+        r = -self.residual.edge_residual(label, self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
+
+        return r
 
 
 class CrankNicolson(TimeIntegrator):
