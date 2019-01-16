@@ -14,6 +14,7 @@ __all__ = [
     'TracerResidual2D'
 ]
 
+
 class HorizontalAdvectionResidual(TracerTerm):
     r"""
     Advection of tracer term, :math:`\bar{\textbf{u}} \cdot \nabla T`
@@ -27,6 +28,7 @@ class HorizontalAdvectionResidual(TracerTerm):
 
     def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         raise NotImplementedError  # FIXME
+
 
 class HorizontalDiffusionResidual(TracerTerm):
     r"""
@@ -50,6 +52,7 @@ class HorizontalDiffusionResidual(TracerTerm):
 
     def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         raise NotImplementedError  # FIXME
+
 
 class SourceResidual(TracerTerm):
     """
@@ -101,4 +104,3 @@ class TracerResidual2D(Equation):
                 f += r
                 print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
         return f
-
