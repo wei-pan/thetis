@@ -200,15 +200,16 @@ class CrankNicolson(TimeIntegrator):
         else:
             # solve the full nonlinear residual form
             u_nl = u
+        self.semi_implicit = semi_implicit
         bnd = bnd_conditions
         f = self.fields
         f_old = self.fields_old
 
         # Crank-Nicolson
-        theta_const = Constant(theta)
+        self.theta_const = Constant(theta)
         self.F = (self.equation.mass_term(u) - self.equation.mass_term(u_old)
-                  - self.dt_const*(theta_const*self.equation.residual('all', u, u_nl, f, f, bnd)
-                                   + (1-theta_const)*self.equation.residual('all', u_old, u_old, f_old, f_old, bnd))
+                  - self.dt_const*(self.theta_const*self.equation.residual('all', u, u_nl, f, f, bnd)
+                                   + (1-self.theta_const)*self.equation.residual('all', u_old, u_old, f_old, f_old, bnd))
                   )
 
         self.update_solver()
@@ -249,7 +250,7 @@ class CrankNicolson(TimeIntegrator):
         """
         u = self.solution
         u_old = self.solution_old
-        if semi_implicit:
+        if self.semi_implicit:
             # linearize around last timestep using the fact that all terms are
             # written in the form a(u_nl) u
             u_nl = u_old
@@ -261,8 +262,8 @@ class CrankNicolson(TimeIntegrator):
         f_old = self.fields_old
 
         r = (u - u_old) / self.dt_const
-        r += -theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions)
-        r += -(1 - theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
+        r += -self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions)
+        r += -(1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
 
         return r
 
@@ -283,8 +284,8 @@ class CrankNicolson(TimeIntegrator):
         f = self.fields
         f_old = self.fields_old
 
-        r = -theta_const * self.residual.edge_residual('all', sol, sol_nl, f, f, self.bnd_conditions)
-        r += -(1 - theta_const) * self.residual.edge_residual('all', sol_old, sol_old, f_old, f_old, self.bnd_conditions)
+        r = -theta_const * self.residual.edge_residual('all', u, u_nl, f, f, self.bnd_conditions)
+        r += -(1 - theta_const) * self.residual.edge_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions)
 
         return r
 
