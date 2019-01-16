@@ -314,6 +314,11 @@ class SteadyState(TimeIntegrator):
         self.F = self.equation.residual('all', solution, solution, fields, fields, bnd_conditions)
         self.update_solver()
 
+        self.solution = solution
+        self.fields = fields
+        if bnd_conditions is not None:
+            self.bnd_conditions = bnd_conditions
+
     def update_solver(self):
         """Create solver objects"""
         # Ensure LU assembles monolithic matrices
@@ -334,6 +339,22 @@ class SteadyState(TimeIntegrator):
         if update_forcings is not None:
             update_forcings(t + self.dt)
         self.solver.solve()
+
+    def cell_residual(self):
+        """
+        Evaluate strong residual on element interiors.
+        """
+        r = -self.residual.cell_residual('all', self.solution, self.solution, self.fields, self.fields, self.bnd_conditions)
+
+        return r
+
+    def edge_residual(self):
+        """
+        Evaluate residuals across edges corresponding to fluxes.
+        """
+        r = -self.residual.edge_residual('all', self.solution, self.solution, self.fields, self.fields, self.bnd_conditions)
+
+        return r
 
 
 class PressureProjectionPicard(TimeIntegrator):
