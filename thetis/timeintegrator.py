@@ -44,7 +44,7 @@ class TimeIntegrator(TimeIntegratorBase):
     """
     Base class for all time integrator objects that march a single equation
     """
-    def __init__(self, equation, solution, fields, dt, solver_parameters={}):
+    def __init__(self, equation, solution, fields, dt, residual=None, solver_parameters={}):
         """
         :arg equation: the equation to solve
         :type equation: :class:`Equation` object
@@ -67,6 +67,9 @@ class TimeIntegrator(TimeIntegratorBase):
                               self.equation.__class__.__name__])
         self.solver_parameters = {}
         self.solver_parameters.update(solver_parameters)
+
+        if residual is not None:
+            self.residual = residual
 
     def set_dt(self, dt):
         """Update time step"""
