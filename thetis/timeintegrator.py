@@ -142,8 +142,8 @@ class ForwardEuler(TimeIntegrator):
         """
         Evaluate strong residual on element interiors.
         """
-        r = (self.solution - self.solution_old) / self.dt_const
-        r += -self.residual.cell_residual('all', self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
+        r = self.residual.mass_term(self.solution) - self.residual.mass_term(self.solution_old)
+        r += -self.dt_const * self.residual.cell_residual('all', self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
 
         return r
 
@@ -151,7 +151,7 @@ class ForwardEuler(TimeIntegrator):
         """
         Evaluate residuals across edges corresponding to fluxes.
         """
-        r = -self.residual.edge_residual(label, self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
+        r = -self.dt_const * self.residual.edge_residual('all', self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions)
 
         return r
 
@@ -261,9 +261,9 @@ class CrankNicolson(TimeIntegrator):
         f = self.fields
         f_old = self.fields_old
 
-        r = (u - u_old) / self.dt_const
-        r += -self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
-        r += -(1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
+        r = self.residual.mass_term(u) - self.residual.mass_term(u_old)
+        r += - self.dt_const * self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
+        r += - self.dt_const * (1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
 
         return r
 
@@ -284,8 +284,8 @@ class CrankNicolson(TimeIntegrator):
         f = self.fields
         f_old = self.fields_old
 
-        r = -theta_const * self.residual.edge_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
-        r += -(1 - theta_const) * self.residual.edge_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
+        r = -self.dt_const * theta_const * self.residual.edge_residual('all', u, u_nl, f, f, self.bnd_conditions, tag='Step 1 ')
+        r += -self.dt_const * (1 - theta_const) * self.residual.edge_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, tag='Step 2 ')
 
         return r
 
