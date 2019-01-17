@@ -24,7 +24,7 @@ class HorizontalAdvectionResidual(TracerTerm):
     def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         if fields_old.get('uv_2d') is not None:
             uv = fields_old['uv_2d']
-            f = div(solution*uv)
+            f = dot(uv, grad(solution))
 
             return -f
 

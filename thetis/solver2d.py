@@ -10,7 +10,7 @@ from . import rungekutta
 from . import implicitexplicit
 from . import coupled_timeintegrator_2d
 from . import tracer_eq_2d
-from . import tracer_eq_2d_residuals
+from . import tracer_2d_residuals
 import weakref
 import time as time_mod
 from mpi4py import MPI
@@ -255,9 +255,9 @@ class FlowSolver2d(FrozenClass):
             else:
                 self.tracer_limiter = None
             if self.options.compute_residuals_tracer:
-                self.residual = tracer_eq_2d_residuals.TracerResidual2D(self.function_spaces.Q_2d,
-                                                                        bathymetry=self.fields.bathymetry_2d,
-                                                                        use_lax_friedrichs=self.options.use_lax_friedrichs_tracer)
+                self.residual = tracer_2d_residuals.TracerResidual2D(self.function_spaces.Q_2d,
+                                                                     bathymetry=self.fields.bathymetry_2d,
+                                                                     use_lax_friedrichs=self.options.use_lax_friedrichs_tracer)
 
         self._isfrozen = True  # disallow creating new attributes
 

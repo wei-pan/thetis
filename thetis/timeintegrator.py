@@ -527,13 +527,13 @@ class PressureProjectionPicard(TimeIntegrator):
         """
         Evaluate strong residual on element interiors.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO
 
     def edge_residual(self):
         """
         Evaluate residuals across edges corresponding to fluxes.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO
 
 
 class LeapFrogAM3(TimeIntegrator):
@@ -687,13 +687,13 @@ class LeapFrogAM3(TimeIntegrator):
         """
         Evaluate strong residual on element interiors.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO
 
     def edge_residual(self):
         """
         Evaluate residuals across edges corresponding to fluxes.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO
 
 
 class SSPRK22ALE(TimeIntegrator):
@@ -856,10 +856,10 @@ class SSPRK22ALE(TimeIntegrator):
         """
         Evaluate strong residual on element interiors.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO
 
     def edge_residual(self):
         """
         Evaluate residuals across edges corresponding to fluxes.
         """
-        raise NotImplementedError # TODO
+        raise NotImplementedError  # TODO

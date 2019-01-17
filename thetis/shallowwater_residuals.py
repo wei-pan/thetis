@@ -376,12 +376,12 @@ class BaseShallowWaterResidual(Equation):
         print("\n{:}Cell residual norm contributions:".format(tag))
         for term in self.select_terms(label):
             if term.__class__.__name__ in ('HUDivResidual', 'ContinuitySourceResidual'):
-                r =  term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                r = term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
                 if r is not None:
                     g += r
                     print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
             else:
-                r =  term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                r = term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
                 if r is not None:
                     f += r
                     print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
@@ -394,12 +394,12 @@ class BaseShallowWaterResidual(Equation):
         print("\n{:}Edge residual norm contributions:".format(tag))
         for term in self.select_terms(label):
             if term.__class__.__name__ in ('HUDivResidual', 'ContinuitySourceResidual'):
-                r =  term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                r = term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
                 if r is not None:
                     g += r
                     print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
             else:
-                r =  term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                r = term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
                 if r is not None:
                     f += r
                     print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
