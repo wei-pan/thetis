@@ -3,9 +3,33 @@ Strong residual for depth averaged shallow water equations
 """
 # TODO: More documentation
 from __future__ import absolute_import
+import numpy as np
+
 from .utility import *
 from .equation import Equation
 from .shallowwater_eq import ShallowWaterMomentumTerm, ShallowWaterContinuityTerm
+
+__all__ = [
+    'BaseShallowWaterResidual',
+    'ShallowWaterResidual',
+    'ShallowWaterMomentumResidual',
+    'ShallowWaterContinuityResidual',
+    'HUDivResidual',
+    'ContinuitySourceResidual',
+    'HorizontalAdvectionResidual',
+    'HorizontalViscosityResidual',
+    'ExternalPressureGradientResidual',
+    'CoriolisResidual',
+    'LinearDragResidual',
+    'QuadraticDragResidual',
+    'BottomDrag3DResidual',
+    'MomentumSourceResidual',
+    'WindStressResidual',
+    'AtmosphericPressureResidual',
+]
+
+g_grav = physical_constants['g_grav']
+rho_0 = physical_constants['rho0']
 
 
 class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
@@ -247,7 +271,7 @@ class TurbineDragResidual(ShallowWaterMomentumTerm):
     def residual_cell(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions):
         total_h = self.get_total_depth(eta_old)
         f = 0
-        mesh = uv.function_space().mesh()
+        mesh = self.bathymetry.function_space().mesh()
         p0_test = TestFunction(FunctionSpace(mesh, "DG", 0))
 
         if self.options.tidal_turbine_farms != {}:
@@ -312,10 +336,120 @@ class BathymetryDisplacementMassResidual(ShallowWaterMomentumTerm):
             uv, eta = split(solution)
         if self.options.use_wetting_and_drying:
             f = self.wd_bathymetry_displacement(eta)
-        return -f
+            return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions):
         return None
 
 
-# TODO: ShallowWaterResidual to combine these terms
+class BaseShallowWaterResidual(Equation):
+    """
+    Abstract base class for ShallowWaterResidual.
+    """
+    def __init__(self, function_space,
+                 bathymetry,
+                 options):
+        super(BaseShallowWaterResidual, self).__init__(function_space)
+        self.bathymetry = bathymetry
+        self.options = options
+
+    def add_momentum_terms(self, *args):
+        self.add_term(ExternalPressureGradientResidual(*args), 'implicit')
+        self.add_term(HorizontalAdvectionResidual(*args), 'explicit')
+        self.add_term(HorizontalViscosityResidual(*args), 'explicit')
+        self.add_term(CoriolisResidual(*args), 'explicit')
+        self.add_term(WindStressResidual(*args), 'source')
+        self.add_term(AtmosphericPressureResidual(*args), 'source')
+        self.add_term(QuadraticDragResidual(*args), 'explicit')
+        self.add_term(LinearDragResidual(*args), 'explicit')
+        self.add_term(BottomDrag3DResidual(*args), 'source')
+        self.add_term(TurbineDragResidual(*args), 'implicit')
+        self.add_term(MomentumSourceResidual(*args), 'source')
+
+    def add_continuity_terms(self, *args):
+        self.add_term(HUDivResidual(*args), 'implicit')
+        self.add_term(ContinuitySourceResidual(*args), 'source')
+
+    def cell_residual_uv_eta(self, label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, tag=''):
+        f = 0
+        g = 0
+        print("\n{:}Cell residual norm contributions:".format(tag))
+        for term in self.select_terms(label):
+            if term.__class__.__name__ in ('HUDivResidual', 'ContinuitySourceResidual'):
+                r =  term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                if r is not None:
+                    g += r
+                    print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
+            else:
+                r =  term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                if r is not None:
+                    f += r
+                    print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
+
+        return np.array([f, g])
+
+    def edge_residual_uv_eta(self, label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, tag=''):
+        f = 0
+        g = 0
+        print("\n{:}Edge residual norm contributions:".format(tag))
+        for term in self.select_terms(label):
+            if term.__class__.__name__ in ('HUDivResidual', 'ContinuitySourceResidual'):
+                r =  term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                if r is not None:
+                    g += r
+                    print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
+            else:
+                r =  term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+                if r is not None:
+                    f += r
+                    print("    {name:30s} {norm:.4e}".format(name=term.name, norm=norm(r)))
+        return np.array([f, g])
+
+
+class ShallowWaterResidual(BaseShallowWaterResidual):
+    """
+    Residual for 2D depth-averaged shallow water equations in non-conservative form.
+    """
+    def __init__(self, function_space,
+                 bathymetry,
+                 options):
+        """
+        :arg function_space: Mixed function space where the solution belongs
+        :arg bathymetry: bathymetry of the domain
+        :type bathymetry: :class:`Function` or :class:`Constant`
+        :arg options: :class:`.AttrDict` object containing all circulation model options
+        """
+        super(ShallowWaterResidual, self).__init__(function_space, bathymetry, options)
+
+        u_test, eta_test = TestFunctions(function_space)
+        u_space, eta_space = function_space.split()
+
+        self.add_momentum_terms(u_test, u_space, eta_space,
+                                bathymetry, options)
+
+        self.add_continuity_terms(eta_test, eta_space, u_space, bathymetry, options)
+        self.bathymetry_displacement_mass_residual = BathymetryDisplacementMassResidual(eta_test, eta_space, u_space, bathymetry, options)
+
+        self.options = options
+
+    def mass_term(self, solution):
+        f, g = split(solution)
+        if self.options.use_wetting_and_drying:
+            f += -self.bathymetry_displacement_mass_residual.residual_cell(solution)
+        return np.array([f, g])
+
+    def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, tag=''):
+        if isinstance(solution, list):
+            uv, eta = solution
+        else:
+            uv, eta = split(solution)
+        uv_old, eta_old = split(solution_old)
+        return self.cell_residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, tag)
+
+    def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, tag=''):
+        if isinstance(solution, list):
+            uv, eta = solution
+        else:
+            uv, eta = split(solution)
+        uv_old, eta_old = split(solution_old)
+        return self.edge_residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, tag)
