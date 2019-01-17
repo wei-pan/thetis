@@ -315,12 +315,12 @@ class HorizontalDiffusionTerm(TracerTerm):
 
 class VerticalDiffusionTerm(TracerTerm):
     r"""
-    Vertical diffusion term :math:`-\frac{\partial}{\partial z} \Big(\mu \frac{T}{\partial z}\Big)`
+    Vertical diffusion term :math:`-\frac{\partial}{\partial z} \Big(\mu \frac{\partial T}{\partial z}\Big)`
 
     Using the symmetric interior penalty method the weak form becomes
 
     .. math::
-        \int_\Omega \frac{\partial}{\partial z} \Big(\mu \frac{T}{\partial z}\Big) \phi dx
+        \int_\Omega \frac{\partial}{\partial z} \Big(\mu \frac{\partial T}{\partial z}\Big) \phi dx
         =& -\int_\Omega \mu \frac{\partial T}{\partial z} \frac{\partial \phi}{\partial z} dz \\
         &+ \int_{\mathcal{I}_{h}} \text{jump}(\phi n_z) \text{avg}\Big(\mu \frac{\partial T}{\partial z}\Big) dS
         + \int_{\mathcal{I}_{h}} \text{jump}(T n_z) \text{avg}\Big(\mu \frac{\partial \phi}{\partial z}\Big) dS \\
