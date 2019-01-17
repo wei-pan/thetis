@@ -4,6 +4,7 @@ Module for 2D depth averaged solver
 from __future__ import absolute_import
 from .utility import *
 from . import shallowwater_eq
+from . import shallowwater_residuals
 from . import timeintegrator
 from . import rungekutta
 from . import implicitexplicit
@@ -242,7 +243,9 @@ class FlowSolver2d(FrozenClass):
         self.eq_sw.bnd_functions = self.bnd_functions['shallow_water']
         if self.options.compute_residuals:
             assert(not(self.options.compute_residuals_tracer))
-            # TODO: Pass in residuals for SWEs
+            self.residual = shallowwater_residuals.ShallowWaterResidual(self.fields.solution_2d.function_space(), self.fields.bathymetry_2d, self.options)
+        else:
+            self.residual = None
         if self.options.solve_tracer:
             self.fields.tracer_2d = Function(self.function_spaces.Q_2d, name='tracer_2d')
             self.eq_tracer = tracer_eq_2d.TracerEquation2D(self.function_spaces.Q_2d, bathymetry=self.fields.bathymetry_2d,
