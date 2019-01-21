@@ -29,7 +29,25 @@ class HorizontalAdvectionResidual(TracerTerm):
             return -f
 
     def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
-        raise NotImplementedError  # FIXME
+        uv = fields_old['uv_2d']
+
+        f = 0 # TODO
+
+        if bnd_conditions is not None:
+            for bnd_marker in self.boundary_markers:
+                funcs = bnd_conditions.get(bnd_marker)
+                c_in = jump(solution)  # Note restriction of DG field
+                if funcs is None:
+                    f += c_in * (uv[0]*self.normal[0] + uv[1]*self.normal[1])
+                else:
+                    c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
+                    uv_av = 0.5*(uv + uv_ext)
+                    un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
+                    s = 0.5*(sign(un_av) + 1.0)
+                    c_up = c_in*s + c_ext*(1-s)
+                    f += c_up*(uv_av[0]*self.normal[0] + uv_av[1]*self.normal[1])
+
+        raise NotImplementedError  # FIXME: More to do!
 
 
 class HorizontalDiffusionResidual(TracerTerm):
