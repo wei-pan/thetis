@@ -21,48 +21,55 @@ class HorizontalAdvectionResidual(TracerTerm):
     """
     name = 'HorizontalAdvection'
 
-    def residual_cell(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
+    def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
         if fields_old.get('uv_2d') is not None:
             uv = fields_old['uv_2d']
             P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            f = I * dot(uv, grad(solution)) * adjoint * self.dx
+
+            if adjoint is None:
+                f = dot(uv, grad(solution))
+            else:
+                f = I * dot(uv, grad(solution)) * adjoint * self.dx
 
             return -f
 
-    def residual_edge(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
+    def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
         if fields_old.get('uv_2d') is not None:
-            uv = fields_old['uv_2d']
-            P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
-            I = TestFunction(P0)
-            i = avg(I)
+            if adjoint is None:
+                raise NotImplementedError  # TODO
+            else:
+                uv = fields_old['uv_2d']
+                P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
+                I = TestFunction(P0)
+                i = avg(I)
 
-            uv_av = avg(uv)
-            un_av = (uv_av[0]*self.normal('-')[0]
-                     + uv_av[1]*self.normal('-')[1])
-            s = 0.5*(sign(un_av) + 1.0)
-            c_up = solution('-')*s + solution('+')*(1-s)
+                uv_av = avg(uv)
+                un_av = (uv_av[0]*self.normal('-')[0]
+                         + uv_av[1]*self.normal('-')[1])
+                s = 0.5*(sign(un_av) + 1.0)
+                c_up = solution('-')*s + solution('+')*(1-s)
 
-            f = i * c_up*(jump(uv, self.normal)) * adjoint('+') * self.dS
+                f = i * c_up*(jump(uv, self.normal)) * adjoint('+') * self.dS
 
-            # TODO: Lax-Friedrichs
+                # TODO: Lax-Friedrichs
 
-            if bnd_conditions is not None:
-                for bnd_marker in self.boundary_markers:
-                    funcs = bnd_conditions.get(bnd_marker)
-                    ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                    c_in = solution
-                    if funcs is None:
-                        f += I * c_in * (uv[0]*self.normal[0]
-                                         + uv[1]*self.normal[1]) * adjoint * ds_bnd
-                    else:
-                        c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
-                        uv_av = 0.5*(uv + uv_ext)
-                        un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
-                        s = 0.5*(sign(un_av) + 1.0)
-                        c_up = c_in*s + c_ext*(1-s)
-                        f += I * c_up*(uv_av[0]*self.normal[0]
-                                       + uv_av[1]*self.normal[1]) * adjoint * ds_bnd
+                if bnd_conditions is not None:
+                    for bnd_marker in self.boundary_markers:
+                        funcs = bnd_conditions.get(bnd_marker)
+                        ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                        c_in = solution
+                        if funcs is None:
+                            f += I * c_in * (uv[0]*self.normal[0]
+                                             + uv[1]*self.normal[1]) * adjoint * ds_bnd
+                        else:
+                            c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
+                            uv_av = 0.5*(uv + uv_ext)
+                            un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
+                            s = 0.5*(sign(un_av) + 1.0)
+                            c_up = c_in*s + c_ext*(1-s)
+                            f += I * c_up*(uv_av[0]*self.normal[0]
+                                           + uv_av[1]*self.normal[1]) * adjoint * ds_bnd
             # TODO: Check works with CG space
             return -f
 
@@ -77,7 +84,7 @@ class HorizontalDiffusionResidual(TracerTerm):
     """
     name = 'HorizontalDiffusion'
 
-    def residual_cell(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
+    def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
         if fields_old.get('diffusivity_h') is not None:
             P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
@@ -86,37 +93,43 @@ class HorizontalDiffusionResidual(TracerTerm):
                                      [0, diffusivity_h, ]])
             diff_flux = dot(diff_tensor, grad(solution))
 
-            f = -I * div(diff_flux) * adjoint * self.dx
+            if adjoint is None:
+                f = -div(diff_flux)
+            else:
+                f = -I * div(diff_flux) * adjoint * self.dx
 
             return -f
 
-    def residual_edge(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
-        P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
-        I = TestFunction(P0)
-        i = avg(I)
-        diffusivity_h = fields_old['diffusivity_h']
-        diff_tensor = as_matrix([[diffusivity_h, 0, ],
-                                     [0, diffusivity_h, ]])
+    def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
+        if adjoint is None:
+            raise NotImplementedError  # TODO
+        else:
+            P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
+            I = TestFunction(P0)
+            i = avg(I)
+            diffusivity_h = fields_old['diffusivity_h']
+            diff_tensor = as_matrix([[diffusivity_h, 0, ],
+                                         [0, diffusivity_h, ]])
 
-        degree_h = self.function_space.ufl_element().degree()
-        sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
-        if degree_h == 0:
-            sigma = 1.5 / self.cellsize
-        alpha = avg(sigma)
-        ds_interior = self.dS
-        f = i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
+            degree_h = self.function_space.ufl_element().degree()
+            sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
+            if degree_h == 0:
+                sigma = 1.5 / self.cellsize
+            alpha = avg(sigma)
+            ds_interior = self.dS
+            f = i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
+                                jump(self.normal))*adjoint('+')*ds_interior
+            f += -i * inner(dot(diff_tensor, grad(adjoint('+'))),
+                            jump(solution, self.normal))*ds_interior
+            # f += 0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
+            #                      jump(solution, self.normal))*ds_interior
+            f += -i * inner(avg(dot(diff_tensor, grad(solution))),
                             jump(self.normal))*adjoint('+')*ds_interior
-        f += -i * inner(dot(diff_tensor, grad(adjoint('+'))),
-                        jump(solution, self.normal))*ds_interior
-        #f += 0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
-        #                     jump(solution, self.normal))*ds_interior
-        f += -i * inner(avg(dot(diff_tensor, grad(solution))),
-                        jump(self.normal))*adjoint('+')*ds_interior
-        #f += -0.5 * i * inner(avg(dot(diff_tensor, grad(solution))),
-        #                      jump(self.normal))*adjoint('+')*ds_interior
+            # f += -0.5 * i * inner(avg(dot(diff_tensor, grad(solution))),
+            #                       jump(self.normal))*adjoint('+')*ds_interior
 
-        # TODO: Check works with CG space
-        return -f
+            # TODO: Check works with CG space
+            return -f
 
 
 class SourceResidual(TracerTerm):
@@ -125,14 +138,18 @@ class SourceResidual(TracerTerm):
     """
     name = 'Source'
 
-    def residual_cell(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
+    def residual_cell(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
         source = fields_old.get('source')
         if source is not None:
-            P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
-            I = TestFunction(P0)
-            return I * source * adjoint * self.dx
+            if adjoint is None:
+                f = source
+            else:
+                P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
+                I = TestFunction(P0)
+                f = I * source * adjoint * self.dx
+            return f
 
-    def residual_edge(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
+    def residual_edge(self, solution, solution_old, fields, fields_old, bnd_conditions=None, adjoint=None):
         return None
 
 
@@ -157,18 +174,24 @@ class TracerResidual2D(Equation):
     def mass_term(self, solution):
         return solution
 
-    def cell_residual(self, label, solution, solution_old, adjoint, fields, fields_old, bnd_conditions, tag=''):
+    def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint):
         f = 0
         for term in self.select_terms(label):
-            r = term.residual_cell(solution, solution_old, adjoint, fields, fields_old, bnd_conditions)
+            r = term.residual_cell(solution, solution_old, fields, fields_old, bnd_conditions, adjoint)
             if r is not None:
                 f += r
-        return 0 if f == 0 else assemble(f)
+        if adjoint is None:
+            return f
+        else:
+            return assemble(f)
 
-    def edge_residual(self, label, solution, solution_old, adjoint, fields, fields_old, bnd_conditions, tag=''):
+    def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint):
         f = 0
         for term in self.select_terms(label):
-            r = term.residual_edge(solution, solution_old, adjoint, fields, fields_old, bnd_conditions)
+            r = term.residual_edge(solution, solution_old, fields, fields_old, bnd_conditions, adjoint)
             if r is not None:
                 f += r
-        return 0 if f == 0 else assemble(f)
+        if adjoint is None:
+            return f
+        else:
+            return assemble(f)
