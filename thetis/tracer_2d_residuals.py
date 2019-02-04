@@ -63,7 +63,8 @@ class HorizontalAdvectionResidual(TracerTerm):
                         c_up = c_in*s + c_ext*(1-s)
                         f += I * c_up*(uv_av[0]*self.normal[0]
                                        + uv_av[1]*self.normal[1]) * adjoint * ds_bnd
-            return f
+            # TODO: Check works with CG space
+            return -f
 
 
 class HorizontalDiffusionResidual(TracerTerm):
@@ -90,10 +91,32 @@ class HorizontalDiffusionResidual(TracerTerm):
             return -f
 
     def residual_edge(self, solution, solution_old, adjoint, fields, fields_old, bnd_conditions=None):
-        #P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
-        #I = TestFunction(P0)
-        #i = avg(I)
-        return None  # FIXME
+        P0 = FunctionSpace(solution.function_space().mesh(), "DG", 0)
+        I = TestFunction(P0)
+        i = avg(I)
+        diffusivity_h = fields_old['diffusivity_h']
+        diff_tensor = as_matrix([[diffusivity_h, 0, ],
+                                     [0, diffusivity_h, ]])
+
+        degree_h = self.function_space.ufl_element().degree()
+        sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
+        if degree_h == 0:
+            sigma = 1.5 / self.cellsize
+        alpha = avg(sigma)
+        ds_interior = self.dS
+        f = i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
+                            jump(self.normal))*adjoint('+')*ds_interior
+        f += -i * inner(dot(diff_tensor, grad(adjoint('+'))),
+                        jump(solution, self.normal))*ds_interior
+        #f += 0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
+        #                     jump(solution, self.normal))*ds_interior
+        f += -i * inner(avg(dot(diff_tensor, grad(solution))),
+                        jump(self.normal))*adjoint('+')*ds_interior
+        #f += -0.5 * i * inner(avg(dot(diff_tensor, grad(solution))),
+        #                      jump(self.normal))*adjoint('+')*ds_interior
+
+        # TODO: Check works with CG space
+        return -f
 
 
 class SourceResidual(TracerTerm):
