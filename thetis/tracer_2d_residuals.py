@@ -50,7 +50,11 @@ class HorizontalAdvectionResidual(TracerTerm):
                 s = 0.5*(sign(un_av) + 1.0)
                 c_up = solution('-')*s + solution('+')*(1-s)
 
+                # Interface term
                 f = i * c_up*(jump(uv, self.normal)) * adjoint('+') * self.dS
+
+                # Term resulting from reverse integration by parts
+                f += -i * dot(uv('+'), self.normal('+')) * solution('+') * adjoint('+') * self.dS
 
                 # TODO: Lax-Friedrichs
 
@@ -59,16 +63,12 @@ class HorizontalAdvectionResidual(TracerTerm):
                         funcs = bnd_conditions.get(bnd_marker)
                         ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
                         c_in = solution
-                        if funcs is None:
-                            f += I * c_in * (uv[0]*self.normal[0]
-                                             + uv[1]*self.normal[1]) * adjoint * ds_bnd
-                        else:
+                        if funcs is not None:
                             c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
                             uv_av = 0.5*(uv + uv_ext)
                             un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
                             s = 0.5*(sign(un_av) + 1.0)
-                            #c_up = c_in*s + c_ext*(1-s)
-                            c_up = (c_in-c_ext)*(1-s)
+                            c_up = (c_in-c_ext)*(1-s)  # c_in-c_ext is boundary residual
                             f += I * c_up*(uv_av[0]*self.normal[0]
                                            + uv_av[1]*self.normal[1]) * adjoint * ds_bnd
             # TODO: Check works with CG space
@@ -112,22 +112,21 @@ class HorizontalDiffusionResidual(TracerTerm):
             diff_tensor = as_matrix([[diffusivity_h, 0, ],
                                          [0, diffusivity_h, ]])
 
+            f = I * inner(dot(diff_tensor, grad(solution)), self.normal) * adjoint * ds
+
             degree_h = self.function_space.ufl_element().degree()
             sigma = 5.0*degree_h*(degree_h + 1)/self.cellsize
             if degree_h == 0:
                 sigma = 1.5 / self.cellsize
             alpha = avg(sigma)
             ds_interior = self.dS
-            f = i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
-                                jump(self.normal))*adjoint('+')*ds_interior
-            f += -i * inner(dot(diff_tensor, grad(adjoint('+'))),
-                            jump(solution, self.normal))*ds_interior
-            # f += 0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
-            #                      jump(solution, self.normal))*ds_interior
-            f += -i * inner(avg(dot(diff_tensor, grad(solution))),
-                            jump(self.normal))*adjoint('+')*ds_interior
-            # f += -0.5 * i * inner(avg(dot(diff_tensor, grad(solution))),
-            #                       jump(self.normal))*adjoint('+')*ds_interior
+
+            f += i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
+                                self.normal('+'))*adjoint('+')*ds_interior
+            f += -0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
+                                  jump(solution, self.normal))*ds_interior
+            f += 0.5 * i * inner(jump(dot(diff_tensor, grad(solution))),
+                            self.normal('+'))*adjoint('+')*ds_interior
 
             # TODO: Check works with CG space
             return -f
