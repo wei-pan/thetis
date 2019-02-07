@@ -67,7 +67,8 @@ class HorizontalAdvectionResidual(TracerTerm):
                             uv_av = 0.5*(uv + uv_ext)
                             un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
                             s = 0.5*(sign(un_av) + 1.0)
-                            c_up = c_in*s + c_ext*(1-s)
+                            #c_up = c_in*s + c_ext*(1-s)
+                            c_up = (c_in-c_ext)*(1-s)
                             f += I * c_up*(uv_av[0]*self.normal[0]
                                            + uv_av[1]*self.normal[1]) * adjoint * ds_bnd
             # TODO: Check works with CG space
