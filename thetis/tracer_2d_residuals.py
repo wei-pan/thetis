@@ -52,9 +52,11 @@ class HorizontalAdvectionResidual(TracerTerm):
 
                 # Interface term
                 f = i * c_up*(jump(uv, self.normal)) * adjoint('+') * self.dS
+                # TODO: Make symmetric (+ and - are arbitrary)
 
                 # Term resulting from reverse integration by parts
                 f += -i * dot(uv('+'), self.normal('+')) * solution('+') * adjoint('+') * self.dS
+                # TODO: Make symmetric (+ and - are arbitrary)
 
                 # TODO: Lax-Friedrichs
 
@@ -123,10 +125,13 @@ class HorizontalDiffusionResidual(TracerTerm):
 
             f += i * alpha*inner(dot(avg(diff_tensor), jump(solution, self.normal)),
                                 self.normal('+'))*adjoint('+')*ds_interior
+            # TODO: Make symmetric (+ and - are arbitrary)
             f += -0.5 * i * inner(dot(diff_tensor, grad(adjoint('+'))),
                                   jump(solution, self.normal))*ds_interior
+            # TODO: Make symmetric (+ and - are arbitrary)
             f += 0.5 * i * inner(jump(dot(diff_tensor, grad(solution))),
                             self.normal('+'))*adjoint('+')*ds_interior
+            # TODO: Make symmetric (+ and - are arbitrary)
 
             # TODO: Check works with CG space
             return -f
