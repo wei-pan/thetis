@@ -146,7 +146,8 @@ class ForwardEuler(TimeIntegrator):
                         is evaluated. Otherwise, the norm of the strong residual is computed on each
                         element.
         """
-        r = self.residual.mass_term(self.solution) - self.residual.mass_term(self.solution_old)
+        r = self.residual.mass_term(self.solution, adjoint)
+        r -= self.residual.mass_term(self.solution_old, adjoint)
         r += -self.dt_const * self.residual.cell_residual('all', self.solution_old, self.solution_old, self.fields_old, self.fields_old, self.bnd_conditions, adjoint)
 
         # Take norm over each element interior
@@ -285,7 +286,7 @@ class CrankNicolson(TimeIntegrator):
         f = self.fields
         f_old = self.fields_old
 
-        r = self.residual.mass_term(u) - self.residual.mass_term(u_old)
+        r = self.residual.mass_term(u, adjoint) - self.residual.mass_term(u_old, adjoint)
         r += - self.dt_const * self.theta_const * self.residual.cell_residual('all', u, u_nl, f, f, self.bnd_conditions, adjoint)
         r += - self.dt_const * (1 - self.theta_const) * self.residual.cell_residual('all', u_old, u_old, f_old, f_old, self.bnd_conditions, adjoint)
 

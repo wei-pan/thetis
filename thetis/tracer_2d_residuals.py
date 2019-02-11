@@ -176,8 +176,11 @@ class TracerResidual2D(Equation):
         self.add_term(HorizontalDiffusionResidual(*args), 'explicit')
         self.add_term(SourceResidual(*args), 'source')
 
-    def mass_term(self, solution):
-        return solution
+    def mass_term(self, solution, adjoint):
+        if adjoint is None:
+            return solution
+        else:
+            return innner(solution, adjoint) * dx
 
     def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint):
         f = 0
