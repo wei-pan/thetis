@@ -53,12 +53,13 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
         i = avg(I)
 
+        f = 0
         if grad_eta_by_parts:
             if uv is not None:
                 head_star = avg(head) + 0.5*sqrt(avg(total_h)/g_grav)*jump(uv, self.normal)
             else:
                 head_star = avg(head)
-            f = i * g_grav*(head_star-head('+'))*dot(adj('+'), self.normal('+'))*self.dS
+            f += i * g_grav*(head_star-head('+'))*dot(adj('+'), self.normal('+'))*self.dS
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
@@ -74,8 +75,6 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
                     un_jump = inner(uv, self.normal)
                     head_rie = head + sqrt(total_h/g_grav)*un_jump
                     f += I * g_grav*(head_rie-head)*dot(adj, self.normal)*ds_bnd
-        else:
-            raise NotImplementedError  # FIXME
         return -f
 
 
@@ -98,7 +97,37 @@ class HUDivResidual(ShallowWaterContinuityTerm):
         adj = adjoint.split()[1]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
         i = avg(I)
-        return None  # FIXME
+
+        total_h = self.get_total_depth(eta_old)
+
+        hu_by_parts = self.u_continuity in ['dg', 'hdiv']
+
+        f = 0
+        if hu_by_parts:
+            if self.eta_is_dg:
+                h = avg(total_h)
+                uv_rie = avg(uv) + sqrt(g_grav/h)*jump(eta, self.normal)
+                hu_star = h*uv_rie
+                f += i * dot(hu_star, self.normal('+')) * adj('+') * self.dS
+                f -= i * dot(total_h('+')*uv('+'), self.normal('+')) * adj('+') * self.dS
+            for bnd_marker in self.boundary_markers:
+                funcs = bnd_conditions.get(bnd_marker)
+                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                if funcs is not None:
+                    eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                    eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
+                    # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                    total_h_ext = self.get_total_depth(eta_ext_old)
+                    h_av = 0.5*(total_h + total_h_ext)
+                    eta_jump = eta - eta_ext
+                    un_rie = 0.5*inner(uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*eta_jump
+                    un_jump = inner(uv_old - uv_ext_old, self.normal)
+                    eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump
+                    h_rie = self.bathymetry + eta_rie
+                    f += I * h_rie * un_rie * adj * ds_bnd
+                    f -= I * total_h * dot(uv, self.normal) * adj * ds_bnd
+        return -f
+        # TODO: Check works for CG space
 
 
 class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
@@ -110,16 +139,45 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
     def residual_cell(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
-        if self.options.use_nonlinear_equations:
-            f = I * inner(dot(uv_old, nabla_grad(uv)), adj) * self.dx
+        
+        if not self.options.use_nonlinear_equations:
+            return 0
 
-            return -f
+        f = I * inner(dot(uv_old, nabla_grad(uv)), adj) * self.dx
+
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
         i = avg(I)
-        return None  # FIXME
+
+        f = 0
+        if not self.options.use_nonlinear_equations:
+            return -f
+
+        if self.u_continuity in ['dg', 'hdiv']:
+            un_av = dot(avg(uv_old), self.normal('-'))
+            uv_up = avg(uv)
+            f += i * dot(uv_up, adj('+')) * jump(uv_old, self.normal) * dS
+            f -= i * dot(uv('+'), adj('+')) * dot(uv_old('+'), self.normal('+')) * dS
+            # TODO: Lax-Friedrichs
+        for bnd_marker in self.boundary_markers:
+            funcs = bnd_conditions.get(bnd_marker)
+            ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+            if funcs is not None:
+                eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
+                # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                eta_jump = eta_old - eta_ext_old
+                total_h = self.get_total_depth(eta_old)
+                un_rie = 0.5*inner(uv_old + uv_ext_old, self.normal) + sqrt(g_grav/total_h)*eta_jump
+                uv_av = 0.5*(uv_ext + uv)
+                f += I * dot(uv_av, adj) * un_rie * ds_bnd
+                f -= I * dot(uv, adj) * dot(uv, self.normal) * ds_bnd
+        return -f
+        # TODO: Check works for CG space
+
 
 
 class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
@@ -148,25 +206,76 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
         nu = fields_old.get('viscosity_h')
-        if nu is not None:
+        if nu is None:
+            return 0
 
-            if self.options.use_grad_div_viscosity_term:
-                stress = nu*2.*sym(grad(uv))
-            else:
-                stress = nu*grad(uv)
+        if self.options.use_grad_div_viscosity_term:
+            stress = nu*2.*sym(grad(uv))
+        else:
+            stress = nu*grad(uv)
 
-            f = -I * inner(div(stress), adj) * self.dx
+        f = -I * inner(div(stress), adj) * self.dx
 
-            if self.options.use_grad_depth_viscosity_term:
-                f += -I * inner(dot(grad(total_h)/total_h, stress), adj) * self.dx
+        if self.options.use_grad_depth_viscosity_term:
+            f += -I * inner(dot(grad(total_h)/total_h, stress), adj) * self.dx
 
-            return -f
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
         i = avg(I)
-        return None  # FIXME
+
+        total_h = self.get_total_depth(eta_old)
+        n = self.normal
+        h = self.cellsize
+
+        nu = fields_old.get('viscosity_h')
+        if nu is None:
+            return 0
+
+        if self.options.use_grad_div_viscosity_term:
+            stress = nu*2.*sym(grad(uv))
+            stress_jump = avg(nu)*2.*sym(tensor_jump(uv, n))
+        else:
+            stress = nu*grad(uv)
+            stress_jump = avg(nu)*tensor_jump(uv, n)
+
+        if self.u_continuity in ['dg', 'hdiv']:
+            p = self.u_space.ufl_element().degree()
+            alpha = 5.*p*(p+1)
+            if p == 0:
+                alpha = 1.5
+            f = (
+                 i * alpha/avg(h)*inner(outer(adj('+'), n('+')), stress_jump)*self.dS
+                 - 0.5 * i * inner(grad(adj('+')), stress_jump)*self.dS
+                 - i * inner(outer(adj('+'), n('+')), avg(stress))*self.dS
+                 + i * inner(stress('+'), outer(adj('+'), n('+')))*self.dS
+            )
+
+            # Dirichlet bcs only for DG
+            for bnd_marker in self.boundary_markers:
+                funcs = bnd_conditions.get(bnd_marker)
+                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                if funcs is not None:
+                    if 'un' in funcs:
+                        delta_uv = (dot(uv, n) - funcs['un'])*n
+                    else:
+                        eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                        if uv_ext is uv:
+                            continue
+                        delta_uv = uv - uv_ext
+                    if self.options.use_grad_div_viscosity_term:
+                        stress_jump = nu*2.*sym(outer(delta_uv, n))
+                    else:
+                        stress_jump = nu*outer(delta_uv, n)
+                    f += (
+                        I * alpha/h*inner(outer(adj, n), stress_jump)*ds_bnd
+                        -I * inner(grad(adj), stress_jump)*ds_bnd
+                    )
+
+            return -f
+            # TODO: Check works for CG space
 
 
 class CoriolisResidual(ShallowWaterMomentumTerm):
@@ -179,12 +288,13 @@ class CoriolisResidual(ShallowWaterMomentumTerm):
         coriolis = fields_old.get('coriolis')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if coriolis is not None:
-            f = I * inner(coriolis * as_vector((-uv[1], uv[0])), adj) * self.dx
-            return -f
+            f += I * inner(coriolis * as_vector((-uv[1], uv[0])), adj) * self.dx
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class WindStressResidual(ShallowWaterMomentumTerm):
@@ -200,12 +310,13 @@ class WindStressResidual(ShallowWaterMomentumTerm):
         total_h = self.get_total_depth(eta_old)
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if wind_stress is not None:
-            f = I * inner(wind_stress / total_h / rho_0, adj) * self.dx
-            return f
+            f += I * inner(wind_stress / total_h / rho_0, adj) * self.dx
+        return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class AtmosphericPressureResidual(ShallowWaterMomentumTerm):
@@ -220,12 +331,13 @@ class AtmosphericPressureResidual(ShallowWaterMomentumTerm):
         atmospheric_pressure = fields_old.get('atmospheric_pressure')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if atmospheric_pressure is not None:
-            f = I * inner(grad(atmospheric_pressure) / rho_0, adj) * self.dx
-            return -f
+            f += I * inner(grad(atmospheric_pressure) / rho_0, adj) * self.dx
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class QuadraticDragResidual(ShallowWaterMomentumTerm):
@@ -249,16 +361,18 @@ class QuadraticDragResidual(ShallowWaterMomentumTerm):
         C_D = fields_old.get('quadratic_drag_coefficient')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if manning_drag_coefficient is not None:
             if C_D is not None:
                 raise Exception('Cannot set both dimensionless and Manning drag parameter')
             C_D = g_grav * manning_drag_coefficient**2 / total_h**(1./3.)
 
+        if C_D is not None:
             f = I * C_D * sqrt(dot(uv_old, uv_old)) * inner(uv, adj) / total_h * self.dx
-            return -f
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class LinearDragResidual(ShallowWaterMomentumTerm):
@@ -273,13 +387,14 @@ class LinearDragResidual(ShallowWaterMomentumTerm):
         linear_drag_coefficient = fields_old.get('linear_drag_coefficient')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if linear_drag_coefficient is not None:
             bottom_fri = linear_drag_coefficient*uv
-            f = I * inner(bottom_fri, adj) * self.dx
-            return -f
+            f += I * inner(bottom_fri, adj) * self.dx
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class BottomDrag3DResidual(ShallowWaterMomentumTerm):
@@ -299,15 +414,16 @@ class BottomDrag3DResidual(ShallowWaterMomentumTerm):
         uv_bottom = fields_old.get('uv_bottom')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if bottom_drag is not None and uv_bottom is not None:
             uvb_mag = sqrt(uv_bottom[0]**2 + uv_bottom[1]**2)
             stress = bottom_drag*uvb_mag*uv_bottom/total_h
             bot_friction = stress
-            f = I * inner(bot_friction, adj) * self.dx
-            return -f
+            f += I * inner(bot_friction, adj) * self.dx
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class TurbineDragResidual(ShallowWaterMomentumTerm):
@@ -326,11 +442,11 @@ class TurbineDragResidual(ShallowWaterMomentumTerm):
     name = 'TurbineDrag'
 
     def residual_cell(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
+        f = 0
         if self.options.tidal_turbine_farms != {}:
             total_h = self.get_total_depth(eta_old)
             adj = adjoint.split()[0]
             I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
-            f = 0
             for subdomain_id, farm_options in self.options.tidal_turbine_farms.items():
                 density = farm_options.turbine_density
                 C_T = farm_options.turbine_options.thrust_coefficient
@@ -338,10 +454,10 @@ class TurbineDragResidual(ShallowWaterMomentumTerm):
                 C_D = (C_T * A_T * density) / 2.
                 unorm = sqrt(dot(uv_old, uv_old))
                 f += I * C_D * unorm * inner(uv, adj) / total_h * self.dx(subdomain_id)
-            return -f
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class MomentumSourceResidual(ShallowWaterMomentumTerm):
@@ -354,13 +470,13 @@ class MomentumSourceResidual(ShallowWaterMomentumTerm):
         momentum_source = fields_old.get('momentum_source')
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
-
+        f = 0
         if momentum_source is not None:
-            f = I * inner(momentum_source, adj) * self.dx
-            return f
+            f += I * inner(momentum_source, adj) * self.dx
+        return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class ContinuitySourceResidual(ShallowWaterContinuityTerm):
@@ -373,13 +489,13 @@ class ContinuitySourceResidual(ShallowWaterContinuityTerm):
         volume_source = fields_old.get('volume_source')
         adj = adjoint.split()[1]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
-
+        f = 0
         if volume_source is not None:
-            f = I * volume_source * adj * self.dx
-            return f
+            f += I * volume_source * adj * self.dx
+        return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class BathymetryDisplacementMassResidual(ShallowWaterMomentumTerm):
@@ -391,12 +507,13 @@ class BathymetryDisplacementMassResidual(ShallowWaterMomentumTerm):
     def residual_cell(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
         adj = adjoint.split()[0]
         I = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+        f = 0
         if self.options.use_wetting_and_drying:
-            f = I * inner(self.wd_bathymetry_displacement(eta), adj) * self.dx
-            return -f
+            f += I * inner(self.wd_bathymetry_displacement(eta), adj) * self.dx
+        return -f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
-        return None
+        return 0
 
 
 class BaseShallowWaterResidual(Equation):
