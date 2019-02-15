@@ -58,10 +58,13 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
                 head_star = avg(head) + 0.5*sqrt(avg(total_h)/g_grav)*jump(uv, self.normal)
             else:
                 head_star = avg(head)
-            loc = -i * g_grav*head*dot(adj, self.normal)
-            f += (loc('+') + loc('-')) * self.dS
             loc = i * dot(adj, self.normal)
             f += g_grav*head_star*(loc('+') + loc('-')) * self.dS
+
+            # Extra terms from second integration by parts
+            loc = -i * g_grav*head*dot(adj, self.normal)
+            f += (loc('+') + loc('-')) * self.dS + loc*ds(degree=self.quad_degree)
+
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
@@ -76,7 +79,7 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
                     # impermeability implies external un=0
                     un_jump = inner(uv, self.normal)
                     head_rie = head + sqrt(total_h/g_grav)*un_jump
-                    f += i * g_grav*(head_rie-head)*dot(adj, self.normal)*ds_bnd
+                    f += i * g_grav*head_rie*dot(adj, self.normal)*ds_bnd
         return -f
 
 
@@ -111,8 +114,11 @@ class HUDivResidual(ShallowWaterContinuityTerm):
                 hu_star = h*uv_rie
                 loc = i * self.normal * adj
                 f += dot(hu_star, loc('+') + loc('-')) * self.dS
-                loc = i * dot(total_h*uv, self.normal) * adj
-                f += (loc('+') + loc('-')) * self.dS
+
+                # Extra terms from second integration by parts
+                loc = -i * dot(total_h*uv, self.normal) * adj
+                f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
+
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
@@ -128,7 +134,6 @@ class HUDivResidual(ShallowWaterContinuityTerm):
                     eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump
                     h_rie = self.bathymetry + eta_rie
                     f += i * h_rie * un_rie * adj * ds_bnd
-                    f -= i * total_h * dot(uv, self.normal) * adj * ds_bnd
         return -f
 
 
@@ -161,9 +166,12 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
             un_av = dot(avg(uv_old), self.normal('-'))
             uv_up = avg(uv)
             loc = i * adj
-            f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS
+            f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS  # TODO: check
+
+            # Extra terms from second integration by parts
             loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
-            f += (loc('+') + loc('-')) * self.dS
+            f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
+
             # TODO: Lax-Friedrichs
         for bnd_marker in self.boundary_markers:
             funcs = bnd_conditions.get(bnd_marker)
@@ -177,7 +185,6 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
                 un_rie = 0.5*inner(uv_old + uv_ext_old, self.normal) + sqrt(g_grav/total_h)*eta_jump
                 uv_av = 0.5*(uv_ext + uv)
                 f += i * dot(uv_av, adj) * un_rie * ds_bnd
-                f -= i * dot(uv, adj) * dot(uv, self.normal) * ds_bnd
         return -f
 
 
@@ -254,8 +261,10 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
             f -= 0.5 * inner(loc('+') + loc('-'), stress_jump) * self.dS
             loc = i * outer(adj, n)
             f -= inner(loc('+') + loc('-'), avg(stress)) * self.dS
+
+            # Extra terms from second integration by parts
             loc = i * inner(stress, outer(adj, n))
-            f += (loc('+') + loc('-')) * self.dS
+            f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
             # Dirichlet bcs only for DG
             for bnd_marker in self.boundary_markers:
@@ -276,6 +285,7 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
                     f += (
                           i * alpha/h*inner(outer(adj, n), stress_jump)*ds_bnd
                           -i * inner(grad(adj), stress_jump)*ds_bnd
+                          -i * inner(outer(adj, n), stress)*ds_bnd
                     )
 
         return -f
