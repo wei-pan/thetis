@@ -602,11 +602,15 @@ class ShallowWaterResidual(BaseShallowWaterResidual):
         self.options = options
         self.mesh = function_space.mesh()
 
-    def mass_term(self, solution):
+    def mass_term(self, solution, adjoint):
         f, g = split(solution)
         if self.options.use_wetting_and_drying:
             f += -self.bathymetry_displacement_mass_residual.residual_cell(solution)
-        return np.array([f, g])
+        if adjoint is None:
+            return np.array([f, g])
+        else:
+            i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+            return i * inner(solution, adjoint) * dx
 
     def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint=None):
         if isinstance(solution, list):
@@ -615,7 +619,7 @@ class ShallowWaterResidual(BaseShallowWaterResidual):
             uv, eta = split(solution)
         uv_old, eta_old = split(solution_old)
         f = self.cell_residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint)
-        return assemble(f)
+        return f
 
     def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint=None):
         if isinstance(solution, list):
@@ -633,4 +637,4 @@ class ShallowWaterResidual(BaseShallowWaterResidual):
         res = Function(P0)
         solve(mass_term == flux_terms, res)        
 
-        return res
+        return i * res * dx

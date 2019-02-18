@@ -154,9 +154,9 @@ class ForwardEuler(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(I*r*r*dx))
-
-        return r
+            return sqrt(assemble(I*r*r*dx))  # FIXME
+        else:
+            return assemble(r)
 
     def edge_residual(self, adjoint=None):
         """
@@ -172,9 +172,9 @@ class ForwardEuler(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(avg(I)*r*r*dS))
-
-        return r
+            return sqrt(assemble(avg(I)*r*r*dS))  # FIXME
+        else:
+            return assemble(r)
 
 
 class CrankNicolson(TimeIntegrator):
@@ -294,9 +294,9 @@ class CrankNicolson(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(I*r*r*dx))
-
-        return r
+            return sqrt(assemble(I*r*r*dx))  # FIXME
+        else:
+            return assemble(r)
 
     def edge_residual(self, adjoint=None):
         """
@@ -326,9 +326,9 @@ class CrankNicolson(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(avg(I)*r*r*dS))
-
-        return r
+            return sqrt(assemble(avg(I)*r*r*dS))  # FIXME
+        else:
+            return assemble(r)
 
 
 class SteadyState(TimeIntegrator):
@@ -395,9 +395,9 @@ class SteadyState(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(I*r*r*dx))
-
-        return r
+            return sqrt(assemble(I*r*r*dx))  # FIXME
+        else:
+            return assemble(r)
 
     def edge_residual(self, adjoint=None):
         """
@@ -413,9 +413,9 @@ class SteadyState(TimeIntegrator):
         if adjoint is None:
             P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
-            r = sqrt(assemble(avg(I)*r*r*dS))
-
-        return r
+            return sqrt(assemble(avg(I)*r*r*dS))  # FIXME
+        else:
+            return assemble(r)
 
 
 class PressureProjectionPicard(TimeIntegrator):

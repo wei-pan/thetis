@@ -180,7 +180,8 @@ class TracerResidual2D(Equation):
         if adjoint is None:
             return solution
         else:
-            return innner(solution, adjoint) * dx
+            i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
+            return i * inner(solution, adjoint) * dx
 
     def cell_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint):
         f = 0
@@ -188,18 +189,21 @@ class TracerResidual2D(Equation):
             r = term.residual_cell(solution, solution_old, fields, fields_old, bnd_conditions, adjoint)
             if r is not None:
                 f += r
-        if adjoint is None:
-            return f
-        else:
-            return assemble(f)
+        return f
 
     def edge_residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions, adjoint):
-        f = 0
+        flux_terms = 0
         for term in self.select_terms(label):
             r = term.residual_edge(solution, solution_old, fields, fields_old, bnd_conditions, adjoint)
             if r is not None:
-                f += r
-        if adjoint is None:
-            return f
-        else:
-            return assemble(f)
+                flux_terms += r
+
+        # Solve an auxiliary problem to get traces on a particular element
+        P0 = FunctionSpace(self.mesh, "DG", 0)
+        res = TrialFunction(P0)
+        i = TestFunction(P0)
+        mass_term = i*res*dx
+        res = Function(P0)
+        solve(mass_term == flux_terms, res) 
+
+        return i * res * dx
