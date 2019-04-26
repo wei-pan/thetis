@@ -640,9 +640,12 @@ class BaseShallowWaterResidual(Equation):
         f = [0, 0, 0] if adjoint is None else 0
         for term in self.select_terms(label):
             r = term.residual_cell(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint)
-            f[0] += r[0]
-            f[1] += r[1]
-            f[2] += r[2]
+            if adjoint is None:
+                f[0] += r[0]
+                f[1] += r[1]
+                f[2] += r[2]
+            else:
+                f += r
 
         return f
 
@@ -650,9 +653,12 @@ class BaseShallowWaterResidual(Equation):
         f = [0, 0, 0] if adjoint is None else 0
         for term in self.select_terms(label):
             r = term.residual_edge(uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint)
-            f[0] += r[0]
-            f[1] += r[1]
-            f[2] += r[2]
+            if adjoint is None:
+                f[0] += r[0]
+                f[1] += r[1]
+                f[2] += r[2]
+            else:
+                f += r
         return f
 
 
