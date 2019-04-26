@@ -51,42 +51,46 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
         return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
+        f = [0, 0, 0] if adjoint is None else 0
+
         # TODO: explicit estimators
         total_h = self.get_total_depth(eta_old)
         head = eta
         grad_eta_by_parts = self.eta_is_dg
-        adj = adjoint.split()[0]
         i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
-        f = 0
-        if grad_eta_by_parts:
-            if uv is not None:
-                head_star = avg(head) + 0.5*sqrt(avg(total_h)/g_grav)*jump(uv, self.normal)
-            else:
-                head_star = avg(head)
-            loc = i * dot(adj, self.normal)
-            f += g_grav*head_star*(loc('+') + loc('-')) * self.dS
+        if adjoint is None:
+            raise NotImplementedError
+        else:
+            adj = adjoint.split()[0]
+            if grad_eta_by_parts:
+                if uv is not None:
+                    head_star = avg(head) + 0.5*sqrt(avg(total_h)/g_grav)*jump(uv, self.normal)
+                else:
+                    head_star = avg(head)
+                loc = i * dot(adj, self.normal)
+                f += g_grav*head_star*(loc('+') + loc('-')) * self.dS
 
-            # Extra terms from second integration by parts
-            loc = -i * g_grav*head*dot(adj, self.normal)
-            f += (loc('+') + loc('-')) * self.dS + loc*ds(degree=self.quad_degree)
+                # Extra terms from second integration by parts
+                loc = -i * g_grav*head*dot(adj, self.normal)
+                f += (loc('+') + loc('-')) * self.dS + loc*ds(degree=self.quad_degree)
 
-            for bnd_marker in self.boundary_markers:
-                funcs = bnd_conditions.get(bnd_marker)
-                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                if funcs is not None:
-                    eta_ext, uv_ext = self.get_bnd_functions(head, uv, bnd_marker, bnd_conditions)
-                    # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
-                    un_jump = inner(uv - uv_ext, self.normal)
-                    eta_rie = 0.5*(head + eta_ext) + sqrt(total_h/g_grav)*un_jump
-                    f += i * g_grav*(eta_rie-eta)*dot(adj, self.normal)*ds_bnd
-                if funcs is None or 'symm' in funcs:
-                    # assume land boundary
-                    # impermeability implies external un=0
-                    un_jump = inner(uv, self.normal)
-                    head_rie = head + sqrt(total_h/g_grav)*un_jump
-                    f += i * g_grav*head_rie*dot(adj, self.normal)*ds_bnd
-        return -f
+                for bnd_marker in self.boundary_markers:
+                    funcs = bnd_conditions.get(bnd_marker)
+                    ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                    if funcs is not None:
+                        eta_ext, uv_ext = self.get_bnd_functions(head, uv, bnd_marker, bnd_conditions)
+                        # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                        un_jump = inner(uv - uv_ext, self.normal)
+                        eta_rie = 0.5*(head + eta_ext) + sqrt(total_h/g_grav)*un_jump
+                        f += i * g_grav*(eta_rie-eta)*dot(adj, self.normal)*ds_bnd
+                    if funcs is None or 'symm' in funcs:
+                        # assume land boundary
+                        # impermeability implies external un=0
+                        un_jump = inner(uv, self.normal)
+                        head_rie = head + sqrt(total_h/g_grav)*un_jump
+                        f += i * g_grav*head_rie*dot(adj, self.normal)*ds_bnd
+            return -f
 
 
 class HUDivResidual(ShallowWaterContinuityTerm):
@@ -109,43 +113,46 @@ class HUDivResidual(ShallowWaterContinuityTerm):
         return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
+        f = [0, 0, 0] if adjoint is None else 0
         # TODO: explicit estimators
-        adj = adjoint.split()[1]
         i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
         total_h = self.get_total_depth(eta_old)
 
         hu_by_parts = self.u_continuity in ['dg', 'hdiv']
 
-        f = 0
-        if hu_by_parts:
-            if self.eta_is_dg:
-                h = avg(total_h)
-                uv_rie = avg(uv) + sqrt(g_grav/h)*jump(eta, self.normal)
-                hu_star = h*uv_rie
-                loc = i * self.normal * adj
-                f += dot(hu_star, loc('+') + loc('-')) * self.dS
+        if adjoint is None:
+            raise NotImplementedError
+        else:
+            adj = adjoint.split()[1]
+            if hu_by_parts:
+                if self.eta_is_dg:
+                    h = avg(total_h)
+                    uv_rie = avg(uv) + sqrt(g_grav/h)*jump(eta, self.normal)
+                    hu_star = h*uv_rie
+                    loc = i * self.normal * adj
+                    f += dot(hu_star, loc('+') + loc('-')) * self.dS
 
-                # Extra terms from second integration by parts
-                loc = -i * dot(total_h*uv, self.normal) * adj
-                f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
+                    # Extra terms from second integration by parts
+                    loc = -i * dot(total_h*uv, self.normal) * adj
+                    f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
-            for bnd_marker in self.boundary_markers:
-                funcs = bnd_conditions.get(bnd_marker)
-                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                if funcs is not None:
-                    eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
-                    eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
-                    # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
-                    total_h_ext = self.get_total_depth(eta_ext_old)
-                    h_av = 0.5*(total_h + total_h_ext)
-                    eta_jump = eta - eta_ext
-                    un_rie = 0.5*inner(uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*eta_jump
-                    un_jump = inner(uv_old - uv_ext_old, self.normal)
-                    eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump
-                    h_rie = self.bathymetry + eta_rie
-                    f += i * h_rie * un_rie * adj * ds_bnd
-        return -f
+                for bnd_marker in self.boundary_markers:
+                    funcs = bnd_conditions.get(bnd_marker)
+                    ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                    if funcs is not None:
+                        eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                        eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
+                        # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                        total_h_ext = self.get_total_depth(eta_ext_old)
+                        h_av = 0.5*(total_h + total_h_ext)
+                        eta_jump = eta - eta_ext
+                        un_rie = 0.5*inner(uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*eta_jump
+                        un_jump = inner(uv_old - uv_ext_old, self.normal)
+                        eta_rie = 0.5*(eta_old + eta_ext_old) + sqrt(h_av/g_grav)*un_jump
+                        h_rie = self.bathymetry + eta_rie
+                        f += i * h_rie * un_rie * adj * ds_bnd
+            return -f
 
 
 class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
@@ -171,40 +178,43 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
         return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
+        f = [0, 0, 0] if adjoint is None else 0
         # TODO: explicit estimators
-        adj = adjoint.split()[0]
         i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
-        f = 0
         if not self.options.use_nonlinear_equations:
             return -f
 
-        if self.u_continuity in ['dg', 'hdiv']:
-            un_av = dot(avg(uv_old), self.normal('-'))
-            uv_up = avg(uv)
-            loc = i * adj
-            f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS
+        if adjoint is None:
+            raise NotImplementedError
+        else:
+            adj = adjoint.split()[0]
+            if self.u_continuity in ['dg', 'hdiv']:
+                un_av = dot(avg(uv_old), self.normal('-'))
+                uv_up = avg(uv)
+                loc = i * adj
+                f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS
 
-            # Extra terms from second integration by parts
-            #loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
-            #loc = -i * dot(uv, self.normal) * dot(uv_old, adj)
-            loc = -i * inner(outer(uv, self.normal), outer(uv_old, adj))
-            f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
+                # Extra terms from second integration by parts
+                #loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
+                #loc = -i * dot(uv, self.normal) * dot(uv_old, adj)
+                loc = -i * inner(outer(uv, self.normal), outer(uv_old, adj))
+                f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
-            # TODO: Lax-Friedrichs
-        for bnd_marker in self.boundary_markers:
-            funcs = bnd_conditions.get(bnd_marker)
-            ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-            if funcs is not None:
-                eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
-                eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
-                # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
-                eta_jump = eta_old - eta_ext_old
-                total_h = self.get_total_depth(eta_old)
-                un_rie = 0.5*inner(uv_old + uv_ext_old, self.normal) + sqrt(g_grav/total_h)*eta_jump
-                uv_av = 0.5*(uv_ext + uv)
-                f += i * dot(uv_av, adj) * un_rie * ds_bnd
-        return -f
+                # TODO: Lax-Friedrichs
+            for bnd_marker in self.boundary_markers:
+                funcs = bnd_conditions.get(bnd_marker)
+                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                if funcs is not None:
+                    eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                    eta_ext_old, uv_ext_old = self.get_bnd_functions(eta_old, uv_old, bnd_marker, bnd_conditions)
+                    # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                    eta_jump = eta_old - eta_ext_old
+                    total_h = self.get_total_depth(eta_old)
+                    un_rie = 0.5*inner(uv_old + uv_ext_old, self.normal) + sqrt(g_grav/total_h)*eta_jump
+                    uv_av = 0.5*(uv_ext + uv)
+                    f += i * dot(uv_av, adj) * un_rie * ds_bnd
+            return -f
 
 
 
@@ -260,8 +270,8 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
         return f
 
     def residual_edge(self, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint=None):
+        f = [0, 0, 0] if adjoint is None else 0
         # TODO: explicit estimators
-        adj = adjoint.split()[0]
         i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
         total_h = self.get_total_depth(eta_old)
@@ -270,9 +280,8 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
 
         nu = fields_old.get('viscosity_h')
         if nu is None:
-            return 0
+            return f
 
-        f = 0
         if self.options.use_grad_div_viscosity_term:
             stress = nu*2.*sym(grad(uv))
             stress_jump = avg(nu)*2.*sym(tensor_jump(uv, n))
@@ -280,45 +289,49 @@ class HorizontalViscosityResidual(ShallowWaterMomentumTerm):
             stress = nu*grad(uv)
             stress_jump = avg(nu)*tensor_jump(uv, n)
 
-        if self.u_continuity in ['dg', 'hdiv']:
-            p = self.u_space.ufl_element().degree()
-            alpha = 5.*p*(p+1)
-            if p == 0:
-                alpha = 1.5
-            loc = i * outer(adj, n)
-            f += alpha/avg(h)*inner(loc('+') + loc('-'), stress_jump) * self.dS
-            loc = i * grad(adj)
-            f -= 0.5 * inner(loc('+') + loc('-'), stress_jump) * self.dS
-            loc = i * outer(adj, n)
-            f -= inner(loc('+') + loc('-'), avg(stress)) * self.dS
+        if adjoint is None:
+            raise NotImplementedError
+        else:
+            adj = adjoint.split()[0]
+            if self.u_continuity in ['dg', 'hdiv']:
+                p = self.u_space.ufl_element().degree()
+                alpha = 5.*p*(p+1)
+                if p == 0:
+                    alpha = 1.5
+                loc = i * outer(adj, n)
+                f += alpha/avg(h)*inner(loc('+') + loc('-'), stress_jump) * self.dS
+                loc = i * grad(adj)
+                f -= 0.5 * inner(loc('+') + loc('-'), stress_jump) * self.dS
+                loc = i * outer(adj, n)
+                f -= inner(loc('+') + loc('-'), avg(stress)) * self.dS
 
-            # Extra terms from second integration by parts
-            loc = i * inner(stress, outer(adj, n))
-            f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
+                # Extra terms from second integration by parts
+                loc = i * inner(stress, outer(adj, n))
+                f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
-            # Dirichlet bcs only for DG
-            for bnd_marker in self.boundary_markers:
-                funcs = bnd_conditions.get(bnd_marker)
-                ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                if funcs is not None:
-                    if 'un' in funcs:
-                        delta_uv = (dot(uv, n) - funcs['un'])*n
-                    else:
-                        eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
-                        if uv_ext is uv:
-                            continue
-                        delta_uv = uv - uv_ext
-                    if self.options.use_grad_div_viscosity_term:
-                        stress_jump = nu*2.*sym(outer(delta_uv, n))
-                    else:
-                        stress_jump = nu*outer(delta_uv, n)
-                    f += (
-                          i * alpha/h*inner(outer(adj, n), stress_jump)*ds_bnd
-                          -i * inner(grad(adj), stress_jump)*ds_bnd
-                          -i * inner(outer(adj, n), stress)*ds_bnd
-                    )
+                # Dirichlet bcs only for DG
+                for bnd_marker in self.boundary_markers:
+                    funcs = bnd_conditions.get(bnd_marker)
+                    ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                    if funcs is not None:
+                        if 'un' in funcs:
+                            delta_uv = (dot(uv, n) - funcs['un'])*n
+                        else:
+                            eta_ext, uv_ext = self.get_bnd_functions(eta, uv, bnd_marker, bnd_conditions)
+                            if uv_ext is uv:
+                                continue
+                            delta_uv = uv - uv_ext
+                        if self.options.use_grad_div_viscosity_term:
+                            stress_jump = nu*2.*sym(outer(delta_uv, n))
+                        else:
+                            stress_jump = nu*outer(delta_uv, n)
+                        f += (
+                              i * alpha/h*inner(outer(adj, n), stress_jump)*ds_bnd
+                              -i * inner(grad(adj), stress_jump)*ds_bnd
+                              -i * inner(outer(adj, n), stress)*ds_bnd
+                        )
 
-        return -f
+            return -f
 
 
 class CoriolisResidual(ShallowWaterMomentumTerm):
