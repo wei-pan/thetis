@@ -718,12 +718,17 @@ class ShallowWaterResidual(BaseShallowWaterResidual):
         uv_old, eta_old = split(solution_old)
         flux_terms = self.edge_residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions, adjoint)
         
-        # Solve an auxiliary problem to get traces on a particular element
+        # Solve auxiliary problems to get traces on a particular element
         P0 = FunctionSpace(self.mesh, "DG", 0)
-        res = TrialFunction(P0)
+        res_trial = TrialFunction(P0)
         i = TestFunction(P0)
-        mass_term = i*res*dx
-        res = Function(P0)
-        solve(mass_term == flux_terms, res)        
+        mass_term = i*res_trial*dx
+        if adjoint is None:
+            res = [Function(P0), Function(P0), Function(P0)]
+            for j in range(3):
+                solve(mass_term == flux_terms[j], res[j])
+        else:
+            res = Function(P0)
+            solve(mass_term == flux_terms, res)        
 
-        return i * res * dx
+        return res
