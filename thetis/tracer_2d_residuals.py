@@ -42,6 +42,7 @@ class HorizontalAdvectionResidual(TracerTerm):
                 f = 0
                 if self.horizontal_dg:
                     uv = fields_old['uv_2d']
+                    elev = fields_old['elev_2d']
                     i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
                     uv_av = avg(uv)

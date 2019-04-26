@@ -195,7 +195,6 @@ class CrankNicolson(TimeIntegrator):
         :kwarg bool semi_implicit: If True use a linearized semi-implicit scheme
         """
         super(CrankNicolson, self).__init__(equation, solution, fields, dt, residual, solver_parameters)
-        self.solver_parameters.setdefault('snes_monitor', False)
         if semi_implicit:
             self.solver_parameters.setdefault('snes_type', 'ksponly')
         else:
@@ -350,7 +349,6 @@ class SteadyState(TimeIntegrator):
         :kwarg dict solver_parameters: PETSc solver options
         """
         super(SteadyState, self).__init__(equation, solution, fields, dt, residual, solver_parameters)
-        self.solver_parameters.setdefault('snes_monitor', False)
         self.solver_parameters.setdefault('snes_type', 'newtonls')
         self.F = self.equation.residual('all', solution, solution, fields, fields, bnd_conditions)
         self.update_solver()
@@ -389,15 +387,13 @@ class SteadyState(TimeIntegrator):
                         is evaluated. Otherwise, the norm of the strong residual is computed on each
                         element.
         """
-        r = -self.residual.cell_residual('all', self.solution, self.solution, self.fields, self.fields, self.bnd_conditions, adjoint)
+        r = self.residual.cell_residual('all', self.solution, self.solution, self.fields, self.fields, self.bnd_conditions, adjoint)
 
         # Take norm over each element interior
         if adjoint is None:
-            P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
-            I = TestFunction(P0)
-            return sqrt(assemble(I*r*r*dx))  # FIXME
+            return r  # NOTE: will get squared anyway, so sign doesn't matter
         else:
-            return assemble(r)
+            return assemble(-r)
 
     def edge_residual(self, adjoint=None):
         """
@@ -411,7 +407,7 @@ class SteadyState(TimeIntegrator):
 
         # Take norm over each element's edges
         if adjoint is None:
-            P0 = FunctionSpace(u.function_space().mesh(), "DG", 0)
+            P0 = FunctionSpace(self.solution.function_space().mesh(), "DG", 0)
             I = TestFunction(P0)
             return sqrt(assemble(avg(I)*r*r*dS))  # FIXME
         else:
