@@ -183,10 +183,12 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
             un_av = dot(avg(uv_old), self.normal('-'))
             uv_up = avg(uv)
             loc = i * adj
-            f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS  # TODO: check
+            f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS
 
             # Extra terms from second integration by parts
-            loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
+            #loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
+            #loc = -i * dot(uv, self.normal) * dot(uv_old, adj)
+            loc = -i * inner(outer(uv, self.normal), outer(uv_old, adj))
             f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
             # TODO: Lax-Friedrichs
