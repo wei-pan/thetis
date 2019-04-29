@@ -217,19 +217,20 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
             if self.u_continuity in ['dg', 'hdiv']:
                 un_av = dot(avg(uv_old), self.normal('-'))
                 uv_up = avg(uv)
-                loc = i * adj
+                loc = i*adj
                 f += jump(uv_old, self.normal) * dot(uv_up, loc('+') + loc('-')) * self.dS
 
                 # Extra terms from second integration by parts
                 #loc = -i * dot(uv, adj) * dot(uv_old, self.normal)
                 #loc = -i * dot(uv, self.normal) * dot(uv_old, adj)
-                loc = -i * inner(outer(uv, self.normal), outer(uv_old, adj))
+                loc = -i*inner(outer(uv, self.normal), outer(uv_old, adj))
                 f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
                 if self.options.use_lax_friedrichs_velocity:
                     uv_lax_friedrichs = fields_old.get('lax_friedrichs_velocity_scaling_factor')
                     gamma = 0.5*abs(un_av)*uv_lax_friedrichs
-                    f += gamma*dot(jump(adj), jump(uv))*self.dS
+                    loc = i*adj
+                    f += gamma*dot(loc('+') + loc('-'), jump(uv))*self.dS
                     for bnd_marker in self.boundary_markers:
                         funcs = bnd_conditions.get(bnd_marker)
                         ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
@@ -238,7 +239,7 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
                             n = self.normal
                             uv_ext = uv - 2*dot(uv, n)*n
                             gamma = 0.5*abs(dot(uv_old, n))*uv_lax_friedrichs
-                            f += gamma*dot(adj, uv-uv_ext)*ds_bnd
+                            f += i*gamma*dot(adj, uv-uv_ext)*ds_bnd
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
