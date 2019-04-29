@@ -60,7 +60,32 @@ class ExternalPressureGradientResidual(ShallowWaterMomentumTerm):
         i = TestFunction(FunctionSpace(self.mesh, "DG", 0))
 
         if adjoint is None:
-            raise NotImplementedError
+            if grad_eta_by_parts:
+                if uv is not None:
+                    head_star = avg(head) + 0.5*sqrt(avg(total_h)/g_grav)*jump(uv, self.normal)
+                else:
+                    head_star = avg(head)
+                loc = i * self.normal[0]
+                f[0] += g_grav*head_star*(loc('+') + loc('-')) * self.dS
+                loc = i * self.normal[1]
+                f[1] += g_grav*head_star*(loc('+') + loc('-')) * self.dS
+                for bnd_marker in self.boundary_markers:
+                    funcs = bnd_conditions.get(bnd_marker)
+                    ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                    if funcs is not None:
+                        eta_ext, uv_ext = self.get_bnd_functions(head, uv, bnd_marker, bnd_conditions)
+                        # Compute linear riemann solution with eta, eta_ext, uv, uv_ext
+                        un_jump = inner(uv - uv_ext, self.normal)
+                        eta_rie = 0.5*(head + eta_ext) + sqrt(total_h/g_grav)*un_jump
+                        f[0] += i * g_grav*(eta_rie-eta)*self.normal[0]*ds_bnd
+                        f[1] += i * g_grav*(eta_rie-eta)*self.normal[1]*ds_bnd
+                    if funcs is None or 'symm' in funcs:
+                        # assume land boundary
+                        # impermeability implies external un=0
+                        un_jump = inner(uv, self.normal)
+                        head_rie = head + sqrt(total_h/g_grav)*un_jump
+                        f[0] += i * g_grav*head_rie*self.normal[0]*ds_bnd
+                        f[1] += i * g_grav*head_rie*self.normal[1]*ds_bnd
         else:
             adj = adjoint.split()[0]
             if grad_eta_by_parts:
