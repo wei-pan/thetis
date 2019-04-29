@@ -201,7 +201,19 @@ class HorizontalAdvectionResidual(ShallowWaterMomentumTerm):
                 loc = -i * inner(outer(uv, self.normal), outer(uv_old, adj))
                 f += (loc('+') + loc('-')) * self.dS + loc * ds(degree=self.quad_degree)
 
-                # TODO: Lax-Friedrichs
+                if self.options.use_lax_friedrichs_velocity:
+                    uv_lax_friedrichs = fields_old.get('lax_friedrichs_velocity_scaling_factor')
+                    gamma = 0.5*abs(un_av)*uv_lax_friedrichs
+                    f += gamma*dot(jump(adj), jump(uv))*self.dS
+                    for bnd_marker in self.boundary_markers:
+                        funcs = bnd_conditions.get(bnd_marker)
+                        ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
+                        if funcs is None:
+                            # impose impermeability with mirror velocity
+                            n = self.normal
+                            uv_ext = uv - 2*dot(uv, n)*n
+                            gamma = 0.5*abs(dot(uv_old, n))*uv_lax_friedrichs
+                            f += gamma*dot(adj, uv-uv_ext)*ds_bnd
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
