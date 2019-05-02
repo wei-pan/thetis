@@ -227,16 +227,21 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
 
         fields = {'eta': self.fields.elev_3d,  # FIXME rename elev
                   'int_pg': self.fields.get('int_pg_3d'),
+                  'ext_pg': self.fields.get('ext_pg_3d'),
+                  'uv_3d': self.fields.uv_3d,
                   'uv_depth_av': self.fields.get('uv_dav_3d'),
                   'w': self.fields.w_3d,
                   'w_mesh': self.fields.get('w_mesh_3d'),
                   'viscosity_v': expl_v_visc,
                   'viscosity_h': self.solver.tot_h_visc.get_sum(),
                   'source': self.options.momentum_source_3d,
-                  # uv_mag': self.fields.uv_mag_3d,
+                  # 'uv_mag': self.fields.uv_mag_3d,
                   'uv_p1': self.fields.get('uv_p1_3d'),
                   'lax_friedrichs_velocity_scaling_factor': self.options.lax_friedrichs_velocity_scaling_factor,
                   'coriolis': self.fields.get('coriolis_3d'),
+                 # 'sigma_dt': self.fields.sigma_dt,
+                 # 'sigma_dx': self.fields.sigma_dt,
+                 # 'omega': self.fields.omega,
                   }
         friction_fields = {
             'linear_drag_coefficient': self.options.linear_drag_coefficient,
@@ -275,7 +280,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                       'diffusivity_h': self.solver.tot_h_diff.get_sum(),
                       'diffusivity_v': expl_v_diff,
                       'source': self.options.salinity_source_3d,
-                      # uv_mag': self.fields.uv_mag_3d,
+                      # 'uv_mag': self.fields.uv_mag_3d,
                       'uv_p1': self.fields.get('uv_p1_3d'),
                       'lax_friedrichs_tracer_scaling_factor': self.options.lax_friedrichs_tracer_scaling_factor,
                       }
@@ -308,7 +313,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                       'diffusivity_h': self.solver.tot_h_diff.get_sum(),
                       'diffusivity_v': expl_v_diff,
                       'source': self.options.temperature_source_3d,
-                      # uv_mag': self.fields.uv_mag_3d,
+                      # 'uv_mag': self.fields.uv_mag_3d,
                       'uv_p1': self.fields.get('uv_p1_3d'),
                       'lax_friedrichs_tracer_scaling_factor': self.options.lax_friedrichs_tracer_scaling_factor,
                       }

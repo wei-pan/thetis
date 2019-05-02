@@ -198,14 +198,14 @@ class P1Average(object):
         assert source.function_space() == self.p0 or source.function_space() == self.p1dg
         source_is_p0 = source.function_space() == self.p0
 
-        source_str = 'source[c]' if source_is_p0 else 'source[%(func_dim)d*d + c]'
+        source_str = 'source[0][c]' if source_is_p0 else 'source[d][c]'
         solution.assign(0.0)
         fs_source = source.function_space()
         self.kernel = op2.Kernel("""
-            void my_kernel(double *p1_average, double *source, double *vol_p1, double *vol_p1dg) {
+            void my_kernel(double **p1_average, double **source, double **vol_p1, double **vol_p1dg) {
                 for ( int d = 0; d < %(nodes)d; d++ ) {
                     for ( int c = 0; c < %(func_dim)d; c++ ) {
-                        p1_average[%(func_dim)d*d + c] += %(source_str)s * vol_p1dg[%(func_dim)d*d + c] / vol_p1[%(func_dim)d*d + c];
+                        p1_average[d][c] += %(source_str)s * vol_p1dg[d][c] / vol_p1[d][c];
                     }
                 }
             }""" % {'nodes': solution.cell_node_map().arity,
@@ -215,7 +215,7 @@ class P1Average(object):
 
         op2.par_loop(
             self.kernel, self.p1.mesh().cell_set,
-            solution.dat(op2.INC, self.p1.cell_node_map()),
+            solution.dat(op2.WRITE, self.p1.cell_node_map()),
             source.dat(op2.READ, fs_source.cell_node_map()),
             self.vol_p1.dat(op2.READ, self.p1.cell_node_map()),
             self.vol_p1dg.dat(op2.READ, self.p1dg.cell_node_map()),
@@ -295,8 +295,8 @@ class SmoothVerticalGradSolver(object):
         self.grad_solver = VerticalGradSolver(self.source, self.gradient_p0)
 
         self.p0_copy_kernel = op2.Kernel("""
-            void my_kernel(double *gradient, double *source) {
-                gradient[0] = source[0];
+            void my_kernel(double **gradient, double **source) {
+                gradient[0][0] = source[0][0];
             }""", 'my_kernel')
 
     def solve(self):
@@ -371,8 +371,8 @@ class ShearFrequencySolver(object):
             for i_comp, solver in enumerate(self.var_solvers):
                 solver.solve()
                 gamma = self.relaxation if not init_solve else 1.0
-                mu_comp[i_comp].assign(gamma*self.mu_tmp
-                                       + (1.0 - gamma)*mu_comp[i_comp])
+                mu_comp[i_comp].assign(gamma*self.mu_tmp +
+                                       (1.0 - gamma)*mu_comp[i_comp])
                 self.m2 += mu_comp[i_comp]*mu_comp[i_comp]
             # crop small/negative values
             set_func_min_val(self.m2, self.minval)
@@ -427,8 +427,8 @@ class BuoyFrequencySolver(object):
             if not self._no_op:
                 self.var_solver.solve()
                 gamma = self.relaxation if not init_solve else 1.0
-                self.n2.assign(gamma*self.n2_tmp
-                               + (1.0 - gamma)*self.n2)
+                self.n2.assign(gamma*self.n2_tmp +
+                               (1.0 - gamma)*self.n2)
 
 
 class TurbulenceModel(object):
@@ -553,7 +553,8 @@ class GenericLengthScaleModel(TurbulenceModel):
         elif stability_function_name == 'Cheng':
             self.stability_func = StabilityFunctionCheng(**stab_args)
         else:
-            raise Exception('Unknown stability function type: ' + stability_function_name)
+            raise Exception('Unknown stability function type: ' +
+                            stability_function_name)
 
         if o.compute_cmu0:
             o.cmu0 = self.stability_func.compute_cmu0()
@@ -841,14 +842,14 @@ class PsiSourceTerm(TracerTerm):
             raise Exception('v_elem_size required')
         # bottom condition
         z_b = 0.5*self.v_elem_size + z0_friction
-        diff_flux = (n*diffusivity_v*(cmu0)**p
-                     * k**m * kappa**n * z_b**(n - 1.0))
+        diff_flux = (n*diffusivity_v*(cmu0)**p *
+                     k**m * kappa**n * z_b**(n - 1.0))
         f += diff_flux*self.test*self.normal[2]*ds_bottom
         # surface condition
         z0_surface = 0.5*self.v_elem_size + Constant(0.02)  # TODO generalize
         z_s = self.v_elem_size + z0_surface
-        diff_flux = -(n*diffusivity_v*(cmu0)**p
-                      * k**m * kappa**n * z_s**(n - 1.0))
+        diff_flux = -(n*diffusivity_v*(cmu0)**p *
+                      k**m * kappa**n * z_s**(n - 1.0))
         f += diff_flux*self.test*self.normal[2]*ds_surf
 
         return f
@@ -913,7 +914,7 @@ class TKEEquation(Equation):
 
 
 class PsiEquation(Equation):
-    r"""
+    """
     Generic length scale equation :eq:`turb_psi_eq` without advection terms.
 
     Advection of :math:`\psi` is implemented using the standard tracer equation.

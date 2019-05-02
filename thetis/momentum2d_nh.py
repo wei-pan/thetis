@@ -1,176 +1,5 @@
 r"""
-Depth averaged shallow water equations
-
----------
-Equations
----------
-
-The state variables are water elevation, :math:`\eta`, and depth averaged
-velocity :math:`\bar{\textbf{u}}`.
-
-Denoting the total water depth by :math:`H=\eta + h`, the non-conservative form of
-the free surface equation is
-
-.. math::
-   \frac{\partial \eta}{\partial t} + \nabla \cdot (H \bar{\textbf{u}}) = 0
-   :label: swe_freesurf
-
-The non-conservative momentum equation reads
-
-.. math::
-   \frac{\partial \bar{\textbf{u}}}{\partial t} +
-   \bar{\textbf{u}} \cdot \nabla\bar{\textbf{u}} +
-   f\textbf{e}_z\wedge \bar{\textbf{u}} +
-   g \nabla \eta +
-   \nabla \left(\frac{p_a}{\rho_0} \right) +
-   g \frac{1}{H}\int_{-h}^\eta \nabla r dz
-   = \nabla \cdot \big( \nu_h ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T )\big) +
-   \frac{\nu_h \nabla(H)}{H} \cdot ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T ),
-   :label: swe_momentum
-
-where :math:`g` is the gravitational acceleration, :math:`f` is the Coriolis
-frequency, :math:`\wedge` is the cross product, :math:`\textbf{e}_z` is a vertical unit vector,
-:math:`p_a` is the atmospheric pressure at the free surface, and :math:`\nu_h`
-is viscosity. Water density is given by :math:`\rho = \rho'(T, S, p) + \rho_0`,
-where :math:`\rho_0` is a constant reference density.
-
-Above :math:`r` denotes the baroclinic head
-
-.. math::
-
-  r = \frac{1}{\rho_0} \int_{z}^\eta  \rho' d\zeta.
-
-In the case of purely barotropic problems the :math:`r` and the internal pressure
-gradient are omitted.
-
-If the option :attr:`.ModelOptions.use_nonlinear_equations` is ``False``, we solve the linear shallow water
-equations (i.e. wave equation):
-
-.. math::
-   \frac{\partial \eta}{\partial t} + \nabla \cdot (h \bar{\textbf{u}}) = 0
-   :label: swe_freesurf_linear
-
-.. math::
-   \frac{\partial \bar{\textbf{u}}}{\partial t} +
-   f\textbf{e}_z\wedge \bar{\textbf{u}} +
-   g \nabla \eta
-   = \nabla \cdot \big( \nu_h ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T )\big) +
-   \frac{\nu_h \nabla(H)}{H} \cdot ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T ).
-   :label: swe_momentum_linear
-
-In case of a 3D problem with mode splitting, we use a simplified 2D
-system that contains nothing but the rotational external gravity waves:
-
-.. math::
-    \frac{\partial \eta}{\partial t} + \nabla \cdot (H \bar{\textbf{u}}) = 0
-    :label: swe_freesurf_modesplit
-
-.. math::
-    \frac{\partial \bar{\textbf{u}}}{\partial t} +
-    f\textbf{e}_z\wedge \bar{\textbf{u}} +
-    g \nabla \eta
-    = \textbf{G},
-    :label: swe_momentum_modesplit
-
-where :math:`\textbf{G}` is a source term used to couple the 2D and 3D momentum
-equations.
-
--------------------
-Boundary Conditions
--------------------
-
-All boundary conditions are imposed weakly by providing external values for
-:math:`\eta` and :math:`\bar{\textbf{u}}`.
-
-Boundary conditions are set with a dictionary that defines all prescribed
-variables at each open boundary.
-For example, to assign elevation and volume flux on boundary ``1`` we set
-
-.. code-block:: python
-
-    swe_bnd_funcs = {}
-    swe_bnd_funcs[1] = {'elev':myfunc1, 'flux':myfunc2}
-
-where ``myfunc1`` and ``myfunc2`` are :class:`Constant` or :class:`Function`
-objects.
-
-The user can provide :math:`\eta` and/or :math:`\bar{\textbf{u}}` values.
-Supported combinations are:
-
-- *unspecified* : impermeable (land) boundary, implies symmetric :math:`\eta` condition and zero normal velocity
-- ``'elev'``: elevation only, symmetric velocity (usually unstable)
-- ``'uv'``: 2d velocity vector :math:`\bar{\textbf{u}}=(u, v)` (in mesh coordinates), symmetric elevation
-- ``'un'``: normal velocity (scalar, positive out of domain), symmetric elevation
-- ``'flux'``: normal volume flux (scalar, positive out of domain), symmetric elevation
-- ``'elev'`` and ``'uv'``: water elevation and 2d velocity vector
-- ``'elev'`` and ``'un'``: water elevation and normal velocity
-- ``'elev'`` and ``'flux'``: water elevation and normal flux
-
-The boundary conditions are assigned to the :class:`.FlowSolver2d` or
-:class:`.FlowSolver` objects:
-
-.. code-block:: python
-
-    solver_obj = solver2d.FlowSolver2d(...)
-    ...
-    solver_obj.bnd_functions['shallow_water'] = swe_bnd_funcs
-
-Internally the boundary conditions passed to the :meth:`.Term.residual` method
-of each term:
-
-.. code-block:: python
-
-    adv_term = shallowwater_eq.HorizontalAdvectionTerm(...)
-    adv_form = adv_term.residual(..., bnd_conditions=swe_bnd_funcs)
-
-------------------
-Wetting and drying
-------------------
-
-If the option :attr:`.ModelOptions.use_wetting_and_drying` is ``True``, then wetting and
-drying is included through the formulation of Karna et al. (2011).
-
-The method introduces a modified bathymetry :math:`\tilde{h} = h + f(H)`, which ensures
-positive total water depth, with :math:`f(H)` defined by
-
-.. math::
-   f(H) = \frac{1}{2}(\sqrt{H^2 + \alpha^2} - H),
-
-introducing a wetting-drying parameter :math:`\alpha`, with dimensions of length. This
-results in a modified total water depth :math:`\tilde{H}=H+f(H)`.
-
-The value for :math:`\alpha` is specified by the user through the
-option :attr:`.ModelOptions.wetting_and_drying_alpha`, in units of meters. The default value
-for :attr:`.ModelOptions.wetting_and_drying_alpha` is 0.5, but the appropriate value is problem
-specific and should be set by the user.
-
-An approximate method for selecting a suitable value for :math:`\alpha` is suggested
-by Karna et al. (2011). Defining :math:`L_x` as the horizontal length scale of the
-mesh elements at the wet-dry front, it can be reasoned that :math:`\alpha \approx |L_x
-\nabla h|` yields a suitable choice. Smaller :math:`\alpha` leads to a more accurate
-solution to the shallow water equations in wet regions, but if :math:`\alpha` is too
-small the simulation will become unstable.
-
-When wetting and drying is turned on, two things occur:
-
-    1. All instances of the height, :math:`H`, are replaced by :math:`\tilde{H}` (as defined above);
-    2. An additional displacement term :math:`\frac{\partial \tilde{h}}{\partial t}` is added to the bathymetry in the free surface equation.
-The free surface and momentum equations then become:
-
-.. math::
-   \frac{\partial \eta}{\partial t} + \frac{\partial \tilde{h}}{\partial t} + \nabla \cdot (\tilde{H} \bar{\textbf{u}}) = 0,
-   :label: swe_freesurf_wd
-
-.. math::
-   \frac{\partial \bar{\textbf{u}}}{\partial t} +
-   \bar{\textbf{u}} \cdot \nabla\bar{\textbf{u}} +
-   f\textbf{e}_z\wedge \bar{\textbf{u}} +
-   g \nabla \eta +
-   g \frac{1}{\tilde{H}}\int_{-h}^\eta \nabla r dz
-   = \nabla \cdot \big( \nu_h ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T )\big) +
-   \frac{\nu_h \nabla(\tilde{H})}{\tilde{H}} \cdot ( \nabla \bar{\textbf{u}} + (\nabla \bar{\textbf{u}})^T ).
-   :label: swe_momentum_wd
-
+Layer averaged momentum equations
 """
 from __future__ import absolute_import
 from .utility import *
@@ -180,7 +9,8 @@ __all__ = [
     'BaseShallowWaterEquation',
     'ShallowWaterEquations',
     'ModeSplit2DEquations',
-    'ShallowWaterMomentumEquation',
+    'ShallowWaterMomentumEquation_hori',
+    'ShallowWaterMomentumEquation_vert',
     'FreeSurfaceEquation',
     'ShallowWaterTerm',
     'ShallowWaterMomentumTerm',
@@ -789,6 +619,63 @@ class BathymetryDisplacementMassTerm(ShallowWaterContinuityTerm):
         return -f
 
 
+class HorizontalAdvectionTerm_vert(ShallowWaterContinuityTerm):
+    r"""
+    Horizontal advection term in vertical momentum equation
+    """
+    def residual(self, uv, w, uv_old, w_old, fields, fields_old, bnd_conditions=None):
+
+        if not self.options.use_nonlinear_equations:
+            return 0
+
+        horiz_advection_by_parts = True
+
+        if horiz_advection_by_parts:
+            # f = -inner(nabla_div(outer(uv, self.u_test)), uv)
+            f = -(Dx(uv_old[0]*self.eta_test, 0)*w +
+                  Dx(uv_old[1]*self.eta_test, 1)*w)*self.dx
+            if self.u_continuity in ['dg', 'hdiv']:
+                un_av = dot(avg(uv_old), self.normal('-'))
+                # NOTE solver can stagnate
+                # s = 0.5*(sign(un_av) + 1.0)
+                # NOTE smooth sign change between [-0.02, 0.02], slow
+                # s = 0.5*tanh(100.0*un_av) + 0.5
+                # uv_up = uv('-')*s + uv('+')*(1-s)
+                # NOTE mean flux
+                w_up = avg(w)
+                f += (w_up*jump(self.eta_test, uv_old[0]*self.normal[0]) +
+                      w_up*jump(self.eta_test, uv_old[1]*self.normal[1]))*self.dS
+                # Lax-Friedrichs stabilization
+                if self.options.use_lax_friedrichs_velocity:
+                    uv_lax_friedrichs = fields_old.get('lax_friedrichs_velocity_scaling_factor')
+                    gamma = 0.5*abs(un_av)*uv_lax_friedrichs
+                    f += gamma*dot(jump(self.eta_test), jump(w))*self.dS
+
+            # TODO add boundary condition terms?
+
+        return -f
+
+
+class MomentumSourceTerm_vert(ShallowWaterContinuityTerm):
+    r"""
+    Generic source term in the shallow water momentum equation
+
+    The weak form reads
+
+    .. math::
+        F_s = \int_\Omega \boldsymbol{\tau} \cdot \boldsymbol{\psi} dx
+
+    where :math:`\boldsymbol{\tau}` is a user defined vector valued :class:`Function`.
+    """
+    def residual(self, uv, w, uv_old, w_old, fields, fields_old, bnd_conditions=None):
+        f = 0
+        momentum_source_vert = fields_old.get('momentum_source_vert')
+
+        if momentum_source_vert is not None:
+            f += inner(momentum_source_vert, self.eta_test)*self.dx
+        return f
+
+
 class BaseShallowWaterEquation(Equation):
     """
     Abstract base class for ShallowWaterEquations, ShallowWaterMomentumEquation
@@ -944,7 +831,7 @@ class FreeSurfaceEquation(BaseShallowWaterEquation):
         return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
 
 
-class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
+class ShallowWaterMomentumEquation_hori(BaseShallowWaterEquation):
     """
     2D depth averaged momentum equation :eq:`swe_momentum` in non-conservative
     form.
@@ -960,7 +847,7 @@ class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
         :type bathymetry: :class:`Function` or :class:`Constant`
         :arg options: :class:`.AttrDict` object containing all circulation model options
         """
-        super(ShallowWaterMomentumEquation, self).__init__(u_space, bathymetry, options)
+        super(ShallowWaterMomentumEquation_hori, self).__init__(u_space, bathymetry, options)
         self.add_momentum_terms(u_test, u_space, eta_space,
                                 bathymetry, options)
 
@@ -970,3 +857,34 @@ class ShallowWaterMomentumEquation(BaseShallowWaterEquation):
         eta = fields['eta']
         eta_old = fields_old['eta']
         return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
+
+class ShallowWaterMomentumEquation_vert(BaseShallowWaterEquation):
+    """
+    2D depth averaged momentum equation :eq:`swe_momentum` in non-conservative
+    form.
+    """
+    def __init__(self, eta_test, eta_space, u_space, # note 'eta_test' actually refers to the test function of w
+                 bathymetry,
+                 options):
+        """
+        :arg u_test: test function of the velocity function space
+        :arg u_space: velocity function space
+        :arg eta_space: elevation function space
+        :arg bathymetry: bathymetry of the domain
+        :type bathymetry: :class:`Function` or :class:`Constant`
+        :arg options: :class:`.AttrDict` object containing all circulation model options
+        """
+        super(ShallowWaterMomentumEquation_vert, self).__init__(eta_space, bathymetry, options)
+        self.add_advection_terms(eta_test, eta_space, u_space, bathymetry, options)
+
+    def add_advection_terms(self, *args):
+        self.add_term(HorizontalAdvectionTerm_vert(*args), 'explicit')
+        self.add_term(MomentumSourceTerm_vert(*args), 'source')
+        # TODO add other terms, e.g. viscosity
+
+    def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
+        w = solution
+        w_old = solution_old
+        uv = fields['uv_la']
+        uv_old = fields_old['uv_la']
+        return self.residual_uv_eta(label, uv, w, uv_old, w_old, fields, fields_old, bnd_conditions)

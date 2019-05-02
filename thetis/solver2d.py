@@ -172,8 +172,8 @@ class FlowSolver2d(FrozenClass):
 
         :kwarg float alpha: CFL number scaling factor
         """
-        automatic_timestep = (hasattr(self.options.timestepper_options, 'use_automatic_timestep')
-                              and self.options.timestepper_options.use_automatic_timestep)
+        automatic_timestep = (hasattr(self.options.timestepper_options, 'use_automatic_timestep') and
+                              self.options.timestepper_options.use_automatic_timestep)
         # TODO revisit math alpha is OBSOLETE
         if automatic_timestep:
             mesh2d_dt = self.compute_time_step(u_scale=self.options.horizontal_velocity_scale)
@@ -507,24 +507,14 @@ class FlowSolver2d(FrozenClass):
 
         :arg float cputime: Measured CPU time
         """
-        if self.options.tracer_only:
-            norm_q = norm(self.fields.tracer_2d)
+        norm_h = norm(self.fields.solution_2d.split()[1])
+        norm_u = norm(self.fields.solution_2d.split()[0])
 
-            line = ('{iexp:5d} {i:5d} T={t:10.2f} '
-                    'tracer norm: {q:10.4f} {cpu:5.2f}')
-
-            print_output(line.format(iexp=self.i_export, i=self.iteration,
-                                     t=self.simulation_time, q=norm_q,
-                                     cpu=cputime))
-        else:
-            norm_h = norm(self.fields.solution_2d.split()[1])
-            norm_u = norm(self.fields.solution_2d.split()[0])
-
-            line = ('{iexp:5d} {i:5d} T={t:10.2f} '
-                    'eta norm: {e:10.4f} u norm: {u:10.4f} {cpu:5.2f}')
-            print_output(line.format(iexp=self.i_export, i=self.iteration,
-                                     t=self.simulation_time, e=norm_h,
-                                     u=norm_u, cpu=cputime))
+        line = ('{iexp:5d} {i:5d} T={t:10.2f} '
+                'eta norm: {e:10.4f} u norm: {u:10.4f} {cpu:5.2f}')
+        print_output(line.format(iexp=self.i_export, i=self.iteration,
+                                 t=self.simulation_time, e=norm_h,
+                                 u=norm_u, cpu=cputime))
         sys.stdout.flush()
 
     def iterate(self, update_forcings=None,
@@ -578,7 +568,7 @@ class FlowSolver2d(FrozenClass):
             self.export()
             if export_func is not None:
                 export_func()
-            if 'vtk' in self.exporters and isinstance(self.fields.bathymetry_2d, Function):
+            if 'vtk' in self.exporters:
                 self.exporters['vtk'].export_bathymetry(self.fields.bathymetry_2d)
 
         initial_simulation_time = self.simulation_time

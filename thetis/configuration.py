@@ -1,12 +1,13 @@
 """
 Utility function and extensions to traitlets used for specifying Thetis options
 """
-from .utility import FiredrakeConstant, FiredrakeFunction
 from ipython_genutils.text import indent, dedent
 from traitlets.config.configurable import Configurable
 from traitlets import *
 
 import ufl
+from thetis import FiredrakeConstant as Constant
+from thetis import FiredrakeFunction as Function
 
 from abc import ABCMeta, abstractproperty
 
@@ -30,7 +31,7 @@ def rst_all_options(cls, nspace=0, prefix=None):
         if trait.name in slaved_options:
             continue
         _prefix = prefix if prefix is not None else classname
-        termline = r"{prefix:}.\ **{suffix:}**".format(prefix=_prefix, suffix=trait.name)
+        termline = "{prefix:}.\ **{suffix:}**".format(prefix=_prefix, suffix=trait.name)
 
         if 'Enum' in typ:
             termline += ' : ' + '|'.join(repr(x) for x in trait.values)
@@ -55,7 +56,7 @@ def rst_all_options(cls, nspace=0, prefix=None):
                 dvr = trait.default_value_repr()
             except Exception:
                 dvr = None
-        help = trait.help.strip() if trait.help else 'No description'
+        help = trait.help or 'No description'
         lines.append(indent(dedent(help), 4 + nspace))
         lines.append('')
         lines.append(indent("Default:\n", 4 + nspace))
@@ -138,12 +139,12 @@ class BoundedFloat(Float):
         return proposal
 
 
-class FiredrakeConstantTraitlet(TraitType):
+class FiredrakeConstant(TraitType):
     default_value = None
     info_text = 'a Firedrake Constant'
 
     def validate(self, obj, value):
-        if isinstance(value, FiredrakeConstant):
+        if isinstance(value, Constant):
             return value
         self.error(obj, value)
 
@@ -156,12 +157,12 @@ class FiredrakeCoefficient(TraitType):
     info_text = 'a Firedrake Constant or Function'
 
     def validate(self, obj, value):
-        if isinstance(value, (FiredrakeConstant, FiredrakeFunction)):
+        if isinstance(value, (Constant, Function)):
             return value
         self.error(obj, value)
 
     def default_value_repr(self):
-        if isinstance(self.default_value, FiredrakeConstant):
+        if isinstance(self.default_value, Constant):
             return 'Constant({:})'.format(self.default_value.dat.data[0])
         return 'Function'
 
@@ -171,15 +172,15 @@ class FiredrakeScalarExpression(TraitType):
     info_text = 'a scalar UFL expression'
 
     def validate(self, obj, value):
-        if (isinstance(value, ufl.core.expr.Expr)
-                and ufl.checks.is_ufl_scalar(value)):
+        if (isinstance(value, ufl.core.expr.Expr) and
+                ufl.checks.is_ufl_scalar(value)):
             return value
         self.error(obj, value)
 
     def default_value_repr(self):
-        if isinstance(self.default_value, FiredrakeConstant):
+        if isinstance(self.default_value, Constant):
             return 'Constant({:})'.format(self.default_value.dat.data[0])
-        if isinstance(self.default_value, FiredrakeFunction):
+        if isinstance(self.default_value, Function):
             return 'Function'
         return 'UFL scalar expression'
 
@@ -189,15 +190,15 @@ class FiredrakeVectorExpression(TraitType):
     info_text = 'a vector UFL expression'
 
     def validate(self, obj, value):
-        if (isinstance(value, ufl.core.expr.Expr)
-                and not ufl.checks.is_ufl_scalar(value)):
+        if (isinstance(value, ufl.core.expr.Expr) and
+                not ufl.checks.is_ufl_scalar(value)):
             return value
         self.error(obj, value)
 
     def default_value_repr(self):
-        if isinstance(self.default_value, FiredrakeConstant):
+        if isinstance(self.default_value, Constant):
             return 'Constant({:})'.format(self.default_value.dat.data[0])
-        if isinstance(self.default_value, FiredrakeFunction):
+        if isinstance(self.default_value, Function):
             return 'Function'
         return 'UFL vector expression'
 

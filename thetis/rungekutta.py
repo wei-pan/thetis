@@ -462,6 +462,7 @@ class DIRKGeneric(RungeKuttaTimeIntegrator):
         :type terms_to_add: 'all' or list of 'implicit', 'explicit', 'source'.
         """
         super(DIRKGeneric, self).__init__(equation, solution, fields, dt, solver_parameters)
+        self.solver_parameters.setdefault('snes_monitor', False)
         self.solver_parameters.setdefault('snes_type', 'newtonls')
         self._initialized = False
 
@@ -486,8 +487,8 @@ class DIRKGeneric(RungeKuttaTimeIntegrator):
                         u = self.solution_old + self.a[i][j]*self.dt_const*self.k[j]
                     else:
                         u += self.a[i][j]*self.dt_const*self.k[j]
-                self.F.append(-inner(self.k[i], test)*dx
-                              + self.equation.residual(terms_to_add, u, self.solution_old, fields, fields, bnd_conditions))
+                self.F.append(-inner(self.k[i], test)*dx +
+                              self.equation.residual(terms_to_add, u, self.solution_old, fields, fields, bnd_conditions))
         else:
             # solution must be split before computing sum
             # pass components to equation in a list
@@ -500,8 +501,8 @@ class DIRKGeneric(RungeKuttaTimeIntegrator):
                     else:
                         for l, k in enumerate(split(self.k[j])):
                             u[l] += self.a[i][j]*self.dt_const*k
-                self.F.append(-inner(self.k[i], test)*dx
-                              + self.equation.residual(terms_to_add, u, self.solution_old, fields, fields, bnd_conditions))
+                self.F.append(-inner(self.k[i], test)*dx +
+                              self.equation.residual(terms_to_add, u, self.solution_old, fields, fields, bnd_conditions))
         self.update_solver()
 
         # construct expressions for stage solutions
