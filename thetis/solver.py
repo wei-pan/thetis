@@ -476,9 +476,11 @@ class FlowSolver(FrozenClass):
             self.fields.z_bottom_2d = Function(coord_fs_2d)
             self.fields.bottom_drag_2d = Function(coord_fs_2d)
 
-        self.fields.elev_3d = Function(self.function_spaces.H)
-        self.fields.elev_cg_3d = Function(coord_fs)
+        elev_3d_source = Function(self.function_spaces.H_2d)
+        self.fields.elev_3d = ExtrudedFunction(elev_3d_source, self.mesh)
         self.fields.elev_cg_2d = Function(coord_fs_2d)
+        # FIXME elev_cg_3d can potentially be removed
+        self.fields.elev_cg_3d = ExtrudedFunction(self.fields.elev_cg_2d, self.mesh)
         self.fields.uv_3d = Function(self.function_spaces.U)
         if self.options.use_bottom_friction:
             self.fields.uv_bottom_3d = Function(self.function_spaces.P1v)
@@ -517,8 +519,7 @@ class FlowSolver(FrozenClass):
             if isinstance(self.options.coriolis_frequency, FiredrakeConstant):
                 self.fields.coriolis_3d = self.options.coriolis_frequency
             else:
-                self.fields.coriolis_3d = Function(self.function_spaces.P1)
-                ExpandFunctionTo3d(self.options.coriolis_frequency, self.fields.coriolis_3d).solve()
+                self.fields.coriolis_3d = utility.ExtrudedFunction(self.options.coriolis_frequency, self.mesh)
         if self.options.wind_stress is not None:
             if isinstance(self.options.wind_stress, FiredrakeFunction):
                 assert self.options.wind_stress.function_space().mesh().geometric_dimension() == 3, \
@@ -780,8 +781,6 @@ class FlowSolver(FrozenClass):
                                                         self.fields.uv_dav_2d,
                                                         boundary='top', elem_facet='top',
                                                         elem_height=self.fields.v_elem_size_2d)
-        self.copy_elev_to_3d = ExpandFunctionTo3d(self.fields.elev_2d, self.fields.elev_3d)
-        self.copy_elev_cg_to_3d = ExpandFunctionTo3d(self.fields.elev_cg_2d, self.fields.elev_cg_3d)
         self.copy_uv_dav_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_dav_2d, self.fields.uv_dav_3d,
                                                            elem_height=self.fields.v_elem_size_3d)
         self.copy_uv_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_dav_3d,
@@ -814,8 +813,6 @@ class FlowSolver(FrozenClass):
                                                                  self.fields.bathymetry_3d,
                                                                  self.fields.parab_visc_3d)
         self.uv_p1_projector = Projector(self.fields.uv_3d, self.fields.uv_p1_3d)
-        self.elev_3d_to_cg_projector = Projector(self.fields.elev_3d, self.fields.elev_cg_3d)
-        self.elev_2d_to_cg_projector = Projector(self.fields.elev_2d, self.fields.elev_cg_2d)
 
         # ----- set initial values
         self.fields.bathymetry_2d.project(self.bathymetry_cg_2d)
