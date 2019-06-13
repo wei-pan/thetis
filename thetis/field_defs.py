@@ -76,12 +76,6 @@ field_metadata['uv_bottom_2d'] = {
     'unit': 'm s-1',
     'filename': 'BottomVelo2d',
 }
-field_metadata['uv_dav_3d'] = {
-    'name': 'Depth averaged velocity',
-    'shortname': 'Depth averaged velocity',
-    'unit': 'm s-1',
-    'filename': 'DAVelocity3d',
-}
 field_metadata['uv_mag_3d'] = {
     'name': 'Magnitude of horizontal velocity',
     'shortname': 'Velocity magnitude',

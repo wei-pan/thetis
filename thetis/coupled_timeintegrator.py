@@ -62,16 +62,13 @@ class CoupledTimeIntegratorBase(timeintegrator.TimeIntegratorBase):
         """Computes depth averaged velocity and removes it from the 3D velocity field"""
         with timed_stage('aux_uv_coupling'):
             # compute depth averaged 3D velocity
-            self.solver.uv_averager.solve()  # uv -> uv_dav_3d
-            self.solver.extract_surf_dav_uv.solve()  # uv_dav_3d -> uv_dav_2d
-            self.solver.copy_uv_dav_to_uv_dav_3d.solve()  # uv_dav_2d -> uv_dav_3d
-            # remove depth average from 3D velocity
-            self.fields.uv_3d -= self.fields.uv_dav_3d
+            self.solver.uv_averager.project()  # uv -> uv_dav_2d
+            self.solver.velocity_splitter.remove_average_from_uv()
 
     def _copy_uv_2d_to_3d(self):
         """Copies uv_2d to uv_dav_3d"""
         with timed_stage('aux_uv_coupling'):
-            self.solver.copy_uv_to_uv_dav_3d.solve()
+            self.solver.fields.uv_dav_2d.assign(self.fields.uv_2d)
 
     def _update_2d_coupling_term(self):
         """Update split_residual_2d field for 2D-3D coupling"""
@@ -195,6 +192,12 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
 
         return impl_v_visc, expl_v_visc, impl_v_diff, expl_v_diff
 
+    def _get_uv_dav_3d(self):
+        if 'uv_dav_2d' in self.fields:
+            uv_dav = self.fields.uv_dav_2d.view_3d
+            return as_vector((uv_dav[0], uv_dav[1], 0.0))
+        return None
+
     def _create_swe_integrator(self):
         """
         Create time integrator for 2D system
@@ -225,7 +228,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
 
         fields = {'eta': self.fields.elev_domain_2d.view_3d,  # FIXME rename elev
                   'int_pg': self.fields.get('int_pg_3d'),
-                  'uv_depth_av': self.fields.get('uv_dav_3d'),
+                  'uv_depth_av': self._get_uv_dav_3d(),
                   'w': self.fields.w_3d,
                   'w_mesh': self.fields.get('w_mesh_3d'),
                   'viscosity_v': expl_v_visc,
@@ -249,7 +252,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
             solver_parameters=self.options.timestepper_options.solver_parameters_momentum_explicit)
         if self.solver.options.use_implicit_vertical_diffusion:
             fields = {'viscosity_v': impl_v_visc,
-                      'uv_depth_av': self.fields.get('uv_dav_3d'),
+                      'uv_depth_av': self._get_uv_dav_3d(),
                       }
             fields.update(friction_fields)
             self.timesteppers.mom_impl = self.integrator_vert_3d(
@@ -267,7 +270,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
         if self.solver.options.solve_salinity:
             fields = {'elev_3d': self.fields.elev_domain_2d.view_3d,
                       'uv_3d': self.fields.uv_3d,
-                      'uv_depth_av': self.fields.get('uv_dav_3d'),
+                      'uv_depth_av': self._get_uv_dav_3d(),
                       'w': self.fields.w_3d,
                       'w_mesh': self.fields.get('w_mesh_3d'),
                       'diffusivity_h': self.solver.tot_h_diff.get_sum(),
@@ -300,7 +303,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
         if self.solver.options.solve_temperature:
             fields = {'elev_3d': self.fields.elev_domain_2d.view_3d,
                       'uv_3d': self.fields.uv_3d,
-                      'uv_depth_av': self.fields.get('uv_dav_3d'),
+                      'uv_depth_av': self._get_uv_dav_3d(),
                       'w': self.fields.w_3d,
                       'w_mesh': self.fields.get('w_mesh_3d'),
                       'diffusivity_h': self.solver.tot_h_diff.get_sum(),
@@ -352,7 +355,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
             if eq_tke_adv is not None and eq_psi_adv is not None:
                 fields = {'elev_3d': self.fields.elev_domain_2d.view_3d,
                           'uv_3d': self.fields.uv_3d,
-                          'uv_depth_av': self.fields.get('uv_dav_3d'),
+                          'uv_depth_av': self._get_uv_dav_3d(),
                           'w': self.fields.w_3d,
                           'w_mesh': self.fields.get('w_mesh_3d'),
                           # uv_mag': self.fields.uv_mag_3d,

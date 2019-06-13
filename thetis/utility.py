@@ -779,6 +779,81 @@ class Mesh3DConsistencyCalculator(object):
         print_output('HCC: {:} .. {:}'.format(r_min, r_max))
 
 
+class VelocitySplitter:
+    def __init__(self, uv_3d, uv_dav_2d):
+        self.uv_3d = uv_3d
+        self.uv_dav_2d = uv_dav_2d
+        self.fs_3d = self.uv_3d.function_space()
+        self.fs_2d = self.uv_dav_2d.function_space()
+
+        family_2d = self.fs_2d.ufl_element().family()
+        ufl_elem = self.fs_3d.ufl_element()
+        if isinstance(ufl_elem, ufl.VectorElement):
+            # Unwind vector
+            ufl_elem = ufl_elem.sub_elements()[0]
+        if isinstance(ufl_elem, ufl.HDivElement):
+            # RT case
+            ufl_elem = ufl_elem._element
+        if ufl_elem.family() == 'TensorProductElement':
+            # a normal tensorproduct element
+            family_3dh = ufl_elem.sub_elements()[0].family()
+            if family_2d != family_3dh:
+                raise Exception('2D and 3D spaces do not match: "{0:s}" != "{1:s}"'.format(family_2d, family_3dh))
+
+        # number of nodes in vertical direction
+        n_vert_nodes = self.fs_3d.finat_element.space_dimension() / self.fs_2d.finat_element.space_dimension()
+
+        nodes = get_facet_mask(self.fs_3d, 'geometric', 'bottom')
+        self.idx = op2.Global(len(nodes), nodes, dtype=np.int32, name='node_idx')
+        self.kernel_rm_uv_dav = op2.Kernel("""
+        void my_kernel(double *uv_3d, double *uv_dav_2d, int *idx) {
+            for ( int d = 0; d < %(nodes)d; d++ ) {
+                for ( int c = 0; c < %(func2d_dim)d; c++ ) {
+                    for ( int e = 0; e < %(v_nodes)d; e++ ) {
+                        double uv_dav = uv_dav_2d[%(func2d_dim)d*d + c];
+                        uv_3d[%(func3d_dim)d*(idx[d]+e) + c] += -uv_dav;
+                    }
+                }
+            }
+        }""" % {'nodes': self.fs_2d.finat_element.space_dimension(),
+                'func2d_dim': self.fs_2d.value_size,
+                'func3d_dim': self.fs_3d.value_size,
+                'v_nodes': n_vert_nodes},
+        'my_kernel')
+
+        self.kernel_add_uv_dav = op2.Kernel("""
+        void my_kernel(double *uv_3d, double *uv_dav_2d, int *idx) {
+            for ( int d = 0; d < %(nodes)d; d++ ) {
+                for ( int c = 0; c < %(func2d_dim)d; c++ ) {
+                    for ( int e = 0; e < %(v_nodes)d; e++ ) {
+                        double uv_dav = uv_dav_2d[%(func2d_dim)d*d + c];
+                        uv_3d[%(func3d_dim)d*(idx[d]+e) + c] += uv_dav;
+                    }
+                }
+            }
+        }""" % {'nodes': self.fs_2d.finat_element.space_dimension(),
+                'func2d_dim': self.fs_2d.value_size,
+                'func3d_dim': self.fs_3d.value_size,
+                'v_nodes': n_vert_nodes},
+        'my_kernel')
+
+    def remove_average_from_uv(self):
+        op2.par_loop(
+            self.kernel_rm_uv_dav, self.fs_3d.mesh().cell_set,
+            self.uv_3d.dat(op2.RW, self.fs_3d.cell_node_map()),
+            self.uv_dav_2d.dat(op2.READ, self.fs_2d.cell_node_map()),
+            self.idx(op2.READ),
+            iterate=op2.ALL)
+
+    def add_average_to_uv(self):
+        op2.par_loop(
+            self.kernel_add_uv_dav, self.fs_3d.mesh().cell_set,
+            self.uv_3d.dat(op2.RW, self.fs_3d.cell_node_map()),
+            self.uv_dav_2d.dat(op2.READ, self.fs_2d.cell_node_map()),
+            self.idx(op2.READ),
+            iterate=op2.ALL)
+
+
 def extend_function_to_3d(func, mesh_extruded):
     """
     Returns a 3D view of a 2D :class:`Function` on the extruded domain.
@@ -793,7 +868,11 @@ def extend_function_to_3d(func, mesh_extruded):
     family = ufl_elem.family()
     degree = ufl_elem.degree()
     name = func.name()
-    fs_extended = FunctionSpace(mesh_extruded, family, degree, vfamily='R', vdegree=0)
+    if isinstance(ufl_elem, ufl.VectorElement):
+        # vector function space
+        fs_extended = VectorFunctionSpace(mesh_extruded, family, degree, vfamily='R', vdegree=0, dim=2)
+    else:
+        fs_extended = FunctionSpace(mesh_extruded, family, degree, vfamily='R', vdegree=0)
     func_extended = Function(fs_extended, name=name, val=func.dat)
     func_extended.source = func
     return func_extended

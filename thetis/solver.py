@@ -487,8 +487,8 @@ class FlowSolver(FrozenClass):
         self.fields.z_coord_3d = Function(coord_fs)
         # z coordinate in the reference mesh (eta=0)
         self.fields.z_coord_ref_3d = Function(coord_fs)
-        self.fields.uv_dav_3d = Function(self.function_spaces.U)
-        self.fields.uv_dav_2d = Function(self.function_spaces.U_2d)
+        #self.fields.uv_dav_3d = Function(self.function_spaces.U)
+        self.fields.uv_dav_2d = ExtrudedFunction(self.function_spaces.U_2d, mesh_3d=self.mesh)
         self.fields.split_residual_2d = Function(self.function_spaces.U_2d)
         self.fields.uv_mag_3d = Function(self.function_spaces.P0)
         self.fields.uv_p1_3d = Function(self.function_spaces.P1v)
@@ -723,18 +723,14 @@ class FlowSolver(FrozenClass):
             self.exporters['hdf5'] = e
 
         # ----- Operators
-        tot_uv_3d = self.fields.uv_3d + self.fields.uv_dav_3d
+        uv_dav_2d = self.fields.uv_dav_2d.view_3d
+        tot_uv_3d = self.fields.uv_3d + as_vector((uv_dav_2d[0], uv_dav_2d[1], 0))
         self.w_solver = VerticalVelocitySolver(self.fields.w_3d,
                                                tot_uv_3d,
                                                self.fields.bathymetry_2d.view_3d,
                                                self.eq_momentum.bnd_functions)
-        self.uv_averager = VerticalIntegrator(self.fields.uv_3d,
-                                              self.fields.uv_dav_3d,
-                                              bottom_to_top=True,
-                                              bnd_value=Constant((0.0, 0.0, 0.0)),
-                                              average=True,
-                                              bathymetry=self.fields.bathymetry_2d.view_3d,
-                                              elevation=self.fields.elev_cg_3d)
+        uv_source = as_vector((self.fields.uv_3d[0], self.fields.uv_3d[1]))
+        self.uv_averager = Projector(uv_source, self.fields.uv_dav_2d.view_3d, use_slate_for_inverse=False)
         if self.options.use_baroclinic_formulation:
             if self.options.solve_salinity:
                 s = self.fields.salt_3d
@@ -769,14 +765,7 @@ class FlowSolver(FrozenClass):
                 self.fields, self.fields.bathymetry_2d.view_3d, self.options,
                 self.bnd_functions['momentum'],
                 solver_parameters=self.options.timestepper_options.solver_parameters_momentum_explicit)
-        self.extract_surf_dav_uv = SubFunctionExtractor(self.fields.uv_dav_3d,
-                                                        self.fields.uv_dav_2d,
-                                                        boundary='top', elem_facet='top',
-                                                        elem_height=self.fields.v_elem_size_2d)
-        self.copy_uv_dav_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_dav_2d, self.fields.uv_dav_3d,
-                                                           elem_height=self.fields.v_elem_size_3d)
-        self.copy_uv_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_dav_3d,
-                                                       elem_height=self.fields.v_elem_size_3d)
+        self.velocity_splitter = VelocitySplitter(self.fields.uv_3d, self.fields.uv_dav_2d)
         self.uv_mag_solver = VelocityMagnitudeSolver(self.fields.uv_mag_3d, u=self.fields.uv_3d)
         if self.options.use_bottom_friction:
             self.extract_uv_bottom = SubFunctionExtractor(self.fields.uv_p1_3d, self.fields.uv_bottom_2d,
@@ -886,12 +875,11 @@ class FlowSolver(FrozenClass):
         """
         self.callbacks.evaluate(mode='export', index=self.i_export)
         # set uv to total uv instead of deviation from depth average
-        # TODO find a cleaner way of doing this ...
-        self.fields.uv_3d += self.fields.uv_dav_3d
+        self.velocity_splitter.add_average_to_uv()
         for e in self.exporters.values():
             e.export()
         # restore uv_3d
-        self.fields.uv_3d -= self.fields.uv_dav_3d
+        self.velocity_splitter.remove_average_from_uv()
 
     def load_state(self, i_export, outputdir=None, t=None, iteration=None):
         """
@@ -1014,7 +1002,7 @@ class FlowSolver(FrozenClass):
 
         field_list = [
             'elev_2d', 'uv_2d', 'elev_domain_2d', 'elev_cg_2d', 'uv_3d',
-            'w_3d', 'uv_dav_3d', 'w_mesh_3d',
+            'w_3d', 'uv_dav_2d', 'w_mesh_3d',
             'salt_3d', 'temp_3d', 'density_3d',
             'baroc_head_3d', 'int_pg_3d',
             'psi_3d', 'eps_3d', 'eddy_visc_3d',
