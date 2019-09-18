@@ -248,9 +248,12 @@ class FlowSolver2d(FrozenClass):
             self.options.use_limiter_for_tracers &= self.options.tracer_element_family == 'dg'
             self.options.use_lax_friedrichs_tracer &= self.options.tracer_element_family == 'dg'
             self.options.use_supg_stabilization_tracer &= self.options.tracer_element_family == 'cg'
-            #if self.options.tracer_element_family == 'cg':  # TODO: test
-            #    self.options.use_supg_stabilization_tracer = True
-            #    assert self.options.supg_stabilization_parameter is not None
+            if self.options.tracer_element_family == 'cg':
+                self.options.use_supg_stabilization_tracer = True
+                self.options.cellsize = CellSize(self.mesh2d)  # TODO: Consider anisotropic case
+                if self.options.tracer_advective_velocity is None:
+                    self.options.tracer_advective_velocity = Function(self.function_spaces.U_2d)
+                self.options.set_supg_stabilization_parameter()
 
             self.fields.tracer_2d = Function(self.function_spaces.Q_2d, name='tracer_2d')
             self.eq_tracer = tracer_eq_2d.TracerEquation2D(self.function_spaces.Q_2d, bathymetry=self.fields.bathymetry_2d,
@@ -437,23 +440,6 @@ class FlowSolver2d(FrozenClass):
             self.fields.tracer_2d.project(tracer)
 
         self.timestepper.initialize(self.fields.solution_2d)
-
-    def set_supg_stabilization_parameter(self, uv):
-        """
-        Sets SUPG stabilization parameter, which is scaled by the fluid velocity.
-        """
-        unorm = sqrt(inner(uv, uv))
-        #if not hasattr(self.fields, 'h_elem_size_2d'):
-        #    self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
-        #    get_horizontal_elem_size_2d(self.fields.h_elem_size_2d)
-        #h = self.fields.h_elem_size_2d
-        h = CellSize(self.mesh2d)
-
-        tau = 0.5*h/unorm
-        if self.options.horizontal_diffusivity is not None:
-            Pe = 0.5*unorm*h/self.options.horizontal_diffusivity
-            tau *= min_value(1, Pe/3)
-        self.options.supg_stabilization_parameter = tau*uv
 
     def add_callback(self, callback, eval_interval='export'):
         """

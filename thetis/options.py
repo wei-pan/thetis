@@ -5,7 +5,7 @@ All options are type-checked and they are stored in traitlets Configurable
 objects.
 """
 from .configuration import *
-from .firedrake import Constant
+from .firedrake import Constant, sqrt, inner
 
 
 class TimeStepperOptions(FrozenHasTraits):
@@ -542,7 +542,52 @@ class ModelOptions2d(CommonModelOptions):
         False, help="Use SUPG stabilisation in tracer advection").tag(config=True)
     supg_stabilization_parameter = FiredrakeVectorExpression(
         None, allow_none=True,
-        help="Stabilization parameter under SUPG multplied by fluid velocity").tag(config=True)
+        help="Stabilization parameter under SUPG, scaled by advective velocity").tag(config=True)
+    cellsize = FiredrakeScalarExpression(
+        None, allow_none=True,
+        help="""A scalar field providing a some measure of cell size to be used in stabilization.
+
+                For the isotropic meshes, this could be `CellSize(mesh)`. In the anisotropic case, it
+                might be advisable to incorporate a meaures of cell shape and orientation."""
+        ).tag(config=True)
+
+    def set_supg_stabilization_parameter(self):
+        """
+        Sets SUPG stabilization parameter, which is scaled by the fluid velocity.
+
+        For transient SUPG stabilization parameter, see Donea and Huerta (2003).
+
+ of [Donea & Huerta, 2003], p.232
+        """
+        uv = self.tracer_advective_velocity
+        unorm = sqrt(inner(uv, uv))
+        #if not hasattr(self.fields, 'h_elem_size_2d'):
+        #    self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
+        #    get_horizontal_elem_size_2d(self.fields.h_elem_size_2d)
+        #h = self.fields.h_elem_size_2d
+        h = self.cellsize
+        nu = self.horizontal_diffusivity
+        if nu is None:
+            nu = 0
+
+        # Time derivative part
+        dt = self.timestep
+        if self.timestepper_type == 'CrankNicolson':
+            theta = 0.5
+        elif self.timestepper_type == 'ForwardEuler':
+            theta = 1.0
+        else:
+            raise NotImplementedError  # TODO
+        tau_t = 1/(dt*theta)
+
+        # Advective part
+        tau_a = 2*unorm/h
+
+        # Diffusive part:
+        tau_d = 4*nu/(h**2)
+
+        tau = 1/(tau_t + tau_a + tau_d)
+        self.supg_stabilization_parameter = tau*uv
 
 
 @attach_paired_options("timestepper_type",
