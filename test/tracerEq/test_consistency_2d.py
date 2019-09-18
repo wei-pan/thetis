@@ -104,6 +104,16 @@ def test_const_tracer():
                            use_limiter_for_tracers=False,
                            no_exports=True)
 
+def test_const_tracer_cg():
+    """
+    Test CrankNicolson timeintegrator with SUPG stabilisation
+    Constant tracer, should remain constant
+    """
+    run_tracer_consistency(constant_c= True,
+                           use_nonlinear_equations=True,
+                           solve_tracer=True,
+                           tracer_element_family='cg',
+                           no_exports=True)
 
 
 def test_nonconst_tracer():
@@ -116,6 +126,19 @@ def test_nonconst_tracer():
                            solve_tracer=True,
                            use_limiter_for_tracers=True,
                            no_exports=True)
+
+
+def test_nonconst_tracer_cg():
+    """
+    Test CrankNicolson timeintegrator with SUPG stabilisation
+    Non-trivial tracer, should see no overshoots and be conserved
+    """
+    run_tracer_consistency(constant_c= False,
+                           use_nonlinear_equations=True,
+                           solve_tracer=True,
+                           tracer_element_family='cg',
+                           no_exports=True)
+
 
 
 if __name__ == '__main__':
