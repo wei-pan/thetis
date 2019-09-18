@@ -538,8 +538,11 @@ class ModelOptions2d(CommonModelOptions):
         help="""Finite element family for tracer transport
 
         2D solver supports 'dg' or 'cg'.""").tag(config=True)
-    use_su_stabilization_tracer = Bool(
-        False, help="Use SU stabilisation in tracer advection").tag(config=True)
+    use_supg_stabilization_tracer = Bool(
+        False, help="Use SUPG stabilisation in tracer advection").tag(config=True)
+    supg_stabilization_parameter = FiredrakeVectorExpression(
+        None, allow_none=True,
+        help="Stabilization parameter under SUPG multplied by fluid velocity").tag(config=True)
 
 
 @attach_paired_options("timestepper_type",

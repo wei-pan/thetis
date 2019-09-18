@@ -247,14 +247,16 @@ class FlowSolver2d(FrozenClass):
         if self.options.solve_tracer:
             self.options.use_limiter_for_tracers &= self.options.tracer_element_family == 'dg'
             self.options.use_lax_friedrichs_tracer &= self.options.tracer_element_family == 'dg'
-            self.options.use_su_stabilization_tracer &= self.options.tracer_element_family == 'cg'
-            #if self.options.tracer_element_family == 'cg':  # TODO: Temporary measure until SUPG is implemented
-            #    self.options.use_su_stabilization_tracer = True
+            self.options.use_supg_stabilization_tracer &= self.options.tracer_element_family == 'cg'
+            #if self.options.tracer_element_family == 'cg':  # TODO: test
+            #    self.options.use_supg_stabilization_tracer = True
+            #    assert self.options.supg_stabilization_parameter is not None
 
             self.fields.tracer_2d = Function(self.function_spaces.Q_2d, name='tracer_2d')
             self.eq_tracer = tracer_eq_2d.TracerEquation2D(self.function_spaces.Q_2d, bathymetry=self.fields.bathymetry_2d,
                                                            use_lax_friedrichs=self.options.use_lax_friedrichs_tracer,
-                                                           use_su=self.options.use_su_stabilization_tracer)
+                                                           use_supg=self.options.use_supg_stabilization_tracer,
+                                                           supg_stabilization_parameter=self.options.supg_stabilization_parameter)
             if self.options.use_limiter_for_tracers and self.options.polynomial_degree > 0:
                 self.tracer_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.Q_2d)
             else:
@@ -284,6 +286,7 @@ class FlowSolver2d(FrozenClass):
             'manning_drag_coefficient': self.options.manning_drag_coefficient,
             'viscosity_h': self.options.horizontal_viscosity,
             'lax_friedrichs_velocity_scaling_factor': self.options.lax_friedrichs_velocity_scaling_factor,
+            'supg_stabilization_parameter': self.options.supg_stabilization_parameter,
             'coriolis': self.options.coriolis_frequency,
             'wind_stress': self.options.wind_stress,
             'atmospheric_pressure': self.options.atmospheric_pressure,
@@ -434,6 +437,23 @@ class FlowSolver2d(FrozenClass):
             self.fields.tracer_2d.project(tracer)
 
         self.timestepper.initialize(self.fields.solution_2d)
+
+    def set_supg_stabilization_parameter(self, uv):
+        """
+        Sets SUPG stabilization parameter, which is scaled by the fluid velocity.
+        """
+        unorm = sqrt(inner(uv, uv))
+        #if not hasattr(self.fields, 'h_elem_size_2d'):
+        #    self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
+        #    get_horizontal_elem_size_2d(self.fields.h_elem_size_2d)
+        #h = self.fields.h_elem_size_2d
+        h = CellSize(self.mesh2d)
+
+        tau = 0.5*h/unorm
+        if self.options.horizontal_diffusivity is not None:
+            Pe = 0.5*unorm*h/self.options.horizontal_diffusivity
+            tau *= min_value(1, Pe/3)
+        self.options.supg_stabilization_parameter = tau*uv
 
     def add_callback(self, callback, eval_interval='export'):
         """

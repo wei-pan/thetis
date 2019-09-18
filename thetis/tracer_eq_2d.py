@@ -32,7 +32,7 @@ class TracerTerm(Term):
     boundary functions.
     """
     def __init__(self, function_space,
-                 bathymetry=None, use_lax_friedrichs=True, use_su=False):
+                 bathymetry=None, use_lax_friedrichs=True, use_supg=False):
         """
         :arg function_space: :class:`FunctionSpace` where the solution belongs
         :kwarg bathymetry: bathymetry of the domain
@@ -44,7 +44,7 @@ class TracerTerm(Term):
         continuity = element_continuity(self.function_space.ufl_element())
         self.horizontal_dg = continuity.horizontal == 'dg'
         self.use_lax_friedrichs = use_lax_friedrichs
-        self.use_su = use_su
+        self.use_supg = use_supg
 
         # define measures with a reasonable quadrature degree
         p = self.function_space.ufl_element().degree()
@@ -187,21 +187,6 @@ class HorizontalAdvectionTerm(TracerTerm):
                         f += c_up*(uv[0]*self.normal[0]
                                    + uv[1]*self.normal[1])*self.test*ds_bnd
 
-        if self.use_su:
-
-            # Here CellSize is the measure of element size used in the stabilisation parameter.
-            # TODO: In the presence of anisotropic elements, it may be important to also consider
-            # shape and orientation.
-            unorm = sqrt(inner(uv, uv))
-            if fields_old.get('diffusivity_h') is not None:
-                Pe = 0.5*unorm*self.cellsize/fields_old['diffusivity_h']
-                tau = min_value(0.5*self.cellsize/unorm, Pe/3)
-            else:
-                tau = 0.5*self.cellsize/unorm
-
-            # Add stabilisation term
-            f += tau*inner(uv, grad(self.test))*dot(uv, grad(solution))*dx
-
         return -f
 
 
@@ -298,7 +283,8 @@ class TracerEquation2D(Equation):
     def __init__(self, function_space,
                  bathymetry=None,
                  use_lax_friedrichs=False,
-                 use_su=False):
+                 use_supg=False,
+                 supg_stabilization_parameter=None):
         """
         :arg function_space: :class:`FunctionSpace` where the solution belongs
         :kwarg bathymetry: bathymetry of the domain
@@ -309,7 +295,12 @@ class TracerEquation2D(Equation):
         """
         super(TracerEquation2D, self).__init__(function_space)
 
-        args = (function_space, bathymetry, use_lax_friedrichs, use_su)
+        if use_supg:
+            assert supg_stabilization_parameter is not None
+            test = TestFunction(function_space)
+            self.test = test + dot(supg_stabilization_parameter, grad(test))
+
+        args = (function_space, bathymetry, use_lax_friedrichs, use_supg)
         self.add_term(HorizontalAdvectionTerm(*args), 'explicit')
         self.add_term(HorizontalDiffusionTerm(*args), 'explicit')
         self.add_term(SourceTerm(*args), 'source')
