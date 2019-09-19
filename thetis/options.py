@@ -557,7 +557,8 @@ class ModelOptions2d(CommonModelOptions):
 
         For transient SUPG stabilization parameter, see Donea and Huerta (2003).
 
- of [Donea & Huerta, 2003], p.232
+        Jean Donea and Antonio Huerta. Finite element methods for flow problems.
+        John Wiley & Sons, p.232 (2003).
         """
         uv = self.tracer_advective_velocity
         unorm = sqrt(inner(uv, uv))
