@@ -5,7 +5,7 @@ All options are type-checked and they are stored in traitlets Configurable
 objects.
 """
 from .configuration import *
-from .firedrake import Constant, sqrt, inner
+from .firedrake import Constant, sqrt, inner, Function
 
 
 class TimeStepperOptions(FrozenHasTraits):
@@ -540,7 +540,10 @@ class ModelOptions2d(CommonModelOptions):
         2D solver supports 'dg' or 'cg'.""").tag(config=True)
     use_supg_stabilization_tracer = Bool(
         False, help="Use SUPG stabilisation in tracer advection").tag(config=True)
-    supg_stabilization_parameter = FiredrakeVectorExpression(
+    supg_stabilization_parameter = FiredrakeScalarExpression(
+        None, allow_none=True,
+        help="Stabilization parameter under SUPG").tag(config=True)
+    supg_velocity = FiredrakeVectorExpression(
         None, allow_none=True,
         help="Stabilization parameter under SUPG, scaled by advective velocity").tag(config=True)
     cellsize = FiredrakeScalarExpression(
@@ -551,21 +554,18 @@ class ModelOptions2d(CommonModelOptions):
                 might be advisable to incorporate a meaures of cell shape and orientation."""
         ).tag(config=True)
 
-    def set_supg_stabilization_parameter(self):
+    def set_supg_stabilization_parameter(self, uv=None):
         """
-        Sets SUPG stabilization parameter, which is scaled by the fluid velocity.
-
-        For transient SUPG stabilization parameter, see Donea and Huerta (2003).
+        Sets transient SUPG stabilization parameter with form used in Donea and Huerta (2003).
 
         Jean Donea and Antonio Huerta. Finite element methods for flow problems.
         John Wiley & Sons, p.232 (2003).
         """
-        uv = self.tracer_advective_velocity
+        if uv is None:
+            uv = self.tracer_advective_velocity
+        if self.supg_velocity is None:
+            self.supg_velocity = Function(uv.function_space())
         unorm = sqrt(inner(uv, uv))
-        #if not hasattr(self.fields, 'h_elem_size_2d'):
-        #    self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
-        #    get_horizontal_elem_size_2d(self.fields.h_elem_size_2d)
-        #h = self.fields.h_elem_size_2d
         h = self.cellsize
         nu = self.horizontal_diffusivity
         if nu is None:
@@ -588,7 +588,8 @@ class ModelOptions2d(CommonModelOptions):
         tau_d = 4*nu/(h**2)
 
         tau = 1/(tau_t + tau_a + tau_d)
-        self.supg_stabilization_parameter = tau*uv
+        self.supg_stabilization_parameter = tau
+        self.supg_velocity.project(tau*uv)
 
 
 @attach_paired_options("timestepper_type",

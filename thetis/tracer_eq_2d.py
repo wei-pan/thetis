@@ -284,7 +284,7 @@ class TracerEquation2D(Equation):
                  bathymetry=None,
                  use_lax_friedrichs=False,
                  use_supg=False,
-                 supg_stabilization_parameter=None):
+                 supg_velocity=None):
         """
         :arg function_space: :class:`FunctionSpace` where the solution belongs
         :kwarg bathymetry: bathymetry of the domain
@@ -295,12 +295,18 @@ class TracerEquation2D(Equation):
         """
         super(TracerEquation2D, self).__init__(function_space)
 
-        if use_supg:
-            assert supg_stabilization_parameter is not None
-            test = TestFunction(function_space)
-            self.test = test + dot(supg_stabilization_parameter, grad(test))
-
         args = (function_space, bathymetry, use_lax_friedrichs, use_supg)
         self.add_term(HorizontalAdvectionTerm(*args), 'explicit')
         self.add_term(HorizontalDiffusionTerm(*args), 'explicit')
         self.add_term(SourceTerm(*args), 'source')
+
+        if use_supg:
+        # TODO: Need account for different uv in timeintegrator
+            assert supg_velocity is not None
+            self.set_test_function_supg(supg_velocity)
+
+    def set_test_function_supg(self, supg_velocity):
+        test = TestFunction(self.function_space)
+        self.test = test + dot(supg_velocity, grad(test))
+        for key in self.terms.keys():
+            self.terms[key].test = self.test

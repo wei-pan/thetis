@@ -251,6 +251,7 @@ class FlowSolver2d(FrozenClass):
             if self.options.tracer_element_family == 'cg':
                 self.options.use_supg_stabilization_tracer = True
                 self.options.cellsize = CellSize(self.mesh2d)  # TODO: Consider anisotropic case
+                self.supg_velocity = Function(self.function_spaces.U_2d)
                 if self.options.tracer_advective_velocity is None:
                     self.options.tracer_advective_velocity = Function(self.function_spaces.U_2d)
                 self.options.set_supg_stabilization_parameter()
@@ -259,7 +260,7 @@ class FlowSolver2d(FrozenClass):
             self.eq_tracer = tracer_eq_2d.TracerEquation2D(self.function_spaces.Q_2d, bathymetry=self.fields.bathymetry_2d,
                                                            use_lax_friedrichs=self.options.use_lax_friedrichs_tracer,
                                                            use_supg=self.options.use_supg_stabilization_tracer,
-                                                           supg_stabilization_parameter=self.options.supg_stabilization_parameter)
+                                                           supg_velocity=self.options.supg_velocity)
             if self.options.use_limiter_for_tracers and self.options.polynomial_degree > 0:
                 self.tracer_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.Q_2d)
             else:
@@ -436,6 +437,9 @@ class FlowSolver2d(FrozenClass):
             elev_2d.project(elev)
         if uv is not None:
             uv_2d.project(uv)
+            if self.options.use_supg_stabilization_tracer:
+                self.options.set_supg_stabilization_parameter(uv)
+                self.eq_tracer.set_test_function_supg(self.options.supg_velocity)
         if tracer is not None and self.options.solve_tracer:
             self.fields.tracer_2d.project(tracer)
 
@@ -605,6 +609,9 @@ class FlowSolver2d(FrozenClass):
         while self.simulation_time <= self.options.simulation_end_time + t_epsilon:
 
             self.timestepper.advance(self.simulation_time, update_forcings)
+            if self.options.use_supg_stabilization_tracer:
+                self.options.set_supg_stabilization_parameter(self.fields.solution_2d.split()[0])
+                self.eq_tracer.set_test_function_supg(self.options.supg_velocity)
 
             # Move to next time step
             self.iteration += 1
