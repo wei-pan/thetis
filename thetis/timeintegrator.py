@@ -202,20 +202,26 @@ class CrankNicolson(TimeIntegrator):
 
     def initialize(self, solution):
         """Assigns initial conditions to all required fields."""
-        self.solution_old.assign(solution)
+        self.solution_old.project(solution, annotate = True)
         # assign values to old functions
         for k in sorted(self.fields_old):
-            self.fields_old[k].assign(self.fields[k])
+            if isinstance(self.fields[k], FiredrakeFunction):
+                self.fields_old[k].project(self.fields[k], annotate = True)
+            else:
+                self.fields_old[k].assign(self.fields[k])
 
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
         if update_forcings is not None:
             update_forcings(t + self.dt)
-        self.solution_old.assign(self.solution)
+        self.solution_old.project(self.solution, annotate = True)
         self.solver.solve()
         # shift time
         for k in sorted(self.fields_old):
-            self.fields_old[k].assign(self.fields[k])
+            if isinstance(self.fields_old[k], FiredrakeFunction):
+                self.fields_old[k].project(self.fields[k])
+            else:
+                self.fields_old[k].assign(self.fields[k])
 
 
 class SteadyState(TimeIntegrator):
@@ -368,6 +374,7 @@ class PressureProjectionPicard(TimeIntegrator):
         # M (eta^n+1 - eta^n) + C (u^n+theta) = 0
         # the 'implicit' terms are the gradient (G) and divergence term (C) in the mom. and continuity eqn. resp.
         # where u^* is the velocity solved for in the mom. eqn., and G eta_lagged the gradient term in that eqn.
+        print("here")
         uv_test, eta_test = split(self.equation.test)
         mass_term_star = inner(uv_test, self.uv_star)*dx + inner(eta_test, eta_old)*dx
         self.F = (

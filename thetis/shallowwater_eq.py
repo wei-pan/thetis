@@ -809,7 +809,7 @@ class BathymetryDisplacementMassTerm(ShallowWaterContinuityTerm):
         if isinstance(solution, list):
             uv, eta = solution
         else:
-            uv, eta = split(solution)
+            uv, eta = solution.split()
         f = 0
         if self.options.use_wetting_and_drying:
             f += inner(self.wd_bathymetry_displacement(eta), self.eta_test)*self.dx

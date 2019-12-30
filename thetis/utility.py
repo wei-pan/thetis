@@ -1629,7 +1629,7 @@ def compute_boundary_length(mesh2d):
     boundary_len = OrderedDict()
     for i in boundary_markers:
         ds_restricted = ds(int(i))
-        one_func = Function(p1).assign(1.0)
+        one_func = Function(p1).project(Constant(1.0))
         boundary_len[i] = assemble(one_func * ds_restricted)
     return boundary_len
 
