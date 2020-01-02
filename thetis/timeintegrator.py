@@ -202,11 +202,11 @@ class CrankNicolson(TimeIntegrator):
 
     def initialize(self, solution):
         """Assigns initial conditions to all required fields."""
-        self.solution_old.project(solution, annotate = True)
+        self.solution_old.project(solution)#, annotate = True)
         # assign values to old functions
         for k in sorted(self.fields_old):
             if isinstance(self.fields[k], FiredrakeFunction):
-                self.fields_old[k].project(self.fields[k], annotate = True)
+                self.fields_old[k].project(self.fields[k])#, annotate = True)
             else:
                 self.fields_old[k].assign(self.fields[k])
 
@@ -214,7 +214,7 @@ class CrankNicolson(TimeIntegrator):
         """Advances equations for one time step."""
         if update_forcings is not None:
             update_forcings(t + self.dt)
-        self.solution_old.project(self.solution, annotate = True)
+        self.solution_old.project(self.solution)#, annotate = True)
         self.solver.solve()
         # shift time
         for k in sorted(self.fields_old):

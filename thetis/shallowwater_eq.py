@@ -888,11 +888,17 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         return f
 
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
+        from firedrake import as_vector
         if isinstance(solution, list):
             uv, eta = solution
         else:
-            uv, eta = split(solution)
-        uv_old, eta_old = split(solution_old)
+            print("how many")
+            uv = as_vector([solution[0], solution[1]])
+            eta = solution[2]          
+            #uv, eta = split(solution)
+        #uv_old, eta_old = split(solution_old)
+        uv_old = as_vector([solution_old[0], solution_old[1]])
+        eta_old = solution_old[2]
         return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
 
 
@@ -931,11 +937,16 @@ class ModeSplit2DEquations(BaseShallowWaterEquation):
         self.add_term(AtmosphericPressureTerm(*args), 'source')
 
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
+        from firedrake import as_vector
         if isinstance(solution, list):
             uv, eta = solution
         else:
-            uv, eta = split(solution)
-        uv_old, eta_old = split(solution_old)
+            uv = as_vector([solution[0], solution[1]])
+            eta = solution[2]
+            #uv, eta = split(solution)
+        #uv_old, eta_old = split(solution_old)
+        uv_old = as_vector([solution_old[0], solution_old[1]])
+        eta_old = solution_old[2]            
         return self.residual_uv_eta(label, uv, eta, uv_old, eta_old, fields, fields_old, bnd_conditions)
 
 
