@@ -870,10 +870,11 @@ def extend_function_to_3d(func, mesh_extruded):
     name = func.name()
     if isinstance(ufl_elem, ufl.VectorElement):
         # vector function space
-        fs_extended = VectorFunctionSpace(mesh_extruded, family, degree, vfamily='R', vdegree=0, dim=2)
+        fs_extended = get_functionspace(mesh_extruded, family, degree, 'R', 0,
+                                        dim=2, vector=True)
     else:
-        fs_extended = FunctionSpace(mesh_extruded, family, degree, vfamily='R', vdegree=0)
-    func_extended = Function(fs_extended, name=name, val=func.dat)
+        fs_extended = get_functionspace(mesh_extruded, family, degree, 'R', 0)
+    func_extended = Function(fs_extended, name=name, val=func.dat.data)
     func_extended.source = func
     return func_extended
 
@@ -1559,7 +1560,7 @@ class SmagorinskyViscosity(object):
         if self.weak_form:
             # solve grad(u) weakly
             mesh = output.function_space().mesh()
-            fs_grad = FunctionSpace(mesh, 'DP', 1, vfamily='DP', vdegree=1)
+            fs_grad = get_functionspace(mesh, 'DP', 1, 'DP', 1)
             self.grad = []
             for icomp in range(2):
                 self.grad[icomp] = []
@@ -1780,7 +1781,7 @@ def compute_boundary_length(mesh2d):
     """
     Computes the length of the boundary segments in given 2d mesh
     """
-    p1 = FunctionSpace(mesh2d, 'CG', 1)
+    p1 = get_functionspace(mesh2d, 'CG', 1)
     boundary_markers = sorted(mesh2d.exterior_facets.unique_markers)
     boundary_len = OrderedDict()
     for i in boundary_markers:
