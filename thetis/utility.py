@@ -167,6 +167,8 @@ def element_continuity(ufl_element):
         elem = elem.sub_elements()[0]
     if isinstance(elem, ufl.finiteelement.mixedelement.VectorElement):
         elem = elem.sub_elements()[0]  # take the elem of first component
+    if isinstance(elem, ufl.finiteelement.enrichedelement.EnrichedElement):
+        elem = elem._elements[0]
     if isinstance(elem, ufl.finiteelement.tensorproductelement.TensorProductElement):
         a, b = elem.sub_elements()
         horiz_type = elem_types[a.family()]
@@ -459,11 +461,11 @@ class VerticalIntegrator(object):
         :kwarg elevation: 3D field defining the free surface elevation
         :kwarg dict solver_parameters: PETSc solver options
         """
-        solver_parameters.setdefault('snes_type', 'ksponly')
-        solver_parameters.setdefault('ksp_type', 'preonly')
-        solver_parameters.setdefault('pc_type', 'bjacobi')
-        solver_parameters.setdefault('sub_ksp_type', 'preonly')
-        solver_parameters.setdefault('sub_pc_type', 'ilu')
+        # solver_parameters.setdefault('snes_type', 'ksponly')
+        # solver_parameters.setdefault('ksp_type', 'preonly')
+        # solver_parameters.setdefault('pc_type', 'bjacobi')
+        # solver_parameters.setdefault('sub_ksp_type', 'preonly')
+        # solver_parameters.setdefault('sub_pc_type', 'ilu')
 
         self.output = output
         space = output.function_space()
@@ -948,9 +950,9 @@ class ExpandFunctionTo3d(object):
             family_3dh = ufl_elem.sub_elements()[0].family()
             if family_2d != family_3dh:
                 raise Exception('2D and 3D spaces do not match: "{0:s}" != "{1:s}"'.format(family_2d, family_3dh))
-        if family_2d == 'Raviart-Thomas' and elem_height is None:
-            raise Exception('elem_height must be provided for Raviart-Thomas spaces')
-        self.do_rt_scaling = family_2d == 'Raviart-Thomas'
+        self.do_hdiv_scaling = family_2d in ['Raviart-Thomas', 'RTCF', 'Brezzi-Douglas-Marini', 'BDMCF']
+        if self.do_hdiv_scaling and elem_height is None:
+            raise Exception('elem_height must be provided for HDiv spaces')
 
         self.iter_domain = op2.ALL
 
@@ -974,7 +976,7 @@ class ExpandFunctionTo3d(object):
                     'v_nodes': n_vert_nodes},
             'my_kernel')
 
-        if self.do_rt_scaling:
+        if self.do_hdiv_scaling:
             solver_parameters = {}
             solver_parameters.setdefault('ksp_atol', 1e-12)
             solver_parameters.setdefault('ksp_rtol', 1e-16)
@@ -996,7 +998,7 @@ class ExpandFunctionTo3d(object):
                 self.idx(op2.READ),
                 iterate=self.iter_domain)
 
-            if self.do_rt_scaling:
+            if self.do_hdiv_scaling:
                 self.rt_scale_solver.solve()
 
 
@@ -1074,9 +1076,9 @@ class SubFunctionExtractor(object):
             family_3dh = elem.sub_elements()[0].family()
             if family_2d != family_3dh:
                 raise Exception('2D and 3D spaces do not match: {0:s} {1:s}'.format(family_2d, family_3dh))
-        if family_2d == 'Raviart-Thomas' and elem_height is None:
-            raise Exception('elem_height must be provided for Raviart-Thomas spaces')
-        self.do_rt_scaling = family_2d == 'Raviart-Thomas'
+        self.do_hdiv_scaling = family_2d in ['Raviart-Thomas', 'RTCF', 'Brezzi-Douglas-Marini', 'BDMCF']
+        if self.do_hdiv_scaling and elem_height is None:
+            raise Exception('elem_height must be provided for HDiv spaces')
 
         assert elem_facet in ['top', 'bottom', 'average'], 'Unsupported elem_facet: {:}'.format(elem_facet)
         if elem_facet == 'average':
@@ -1125,7 +1127,7 @@ class SubFunctionExtractor(object):
                         'func3d_dim': self.fs_3d.value_size},
                 'my_kernel')
 
-        if self.do_rt_scaling:
+        if self.do_hdiv_scaling:
             solver_parameters = {}
             solver_parameters.setdefault('ksp_atol', 1e-12)
             solver_parameters.setdefault('ksp_rtol', 1e-16)
@@ -1146,7 +1148,7 @@ class SubFunctionExtractor(object):
                          self.idx(op2.READ),
                          iterate=self.iter_domain)
 
-            if self.do_rt_scaling:
+            if self.do_hdiv_scaling:
                 self.rt_scale_solver.solve()
 
 
