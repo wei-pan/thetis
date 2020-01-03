@@ -90,6 +90,7 @@ class TracerTerm(Term):
         else:
             uv_ext = uv_in
 
+
         return c_ext, uv_ext, elev_ext
 
 
@@ -113,10 +114,11 @@ class HorizontalAdvectionTerm(TracerTerm):
     def residual(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         if fields_old.get('uv_2d') is None:
             return 0
-        elev = fields_old['elev_2d']
-        uv = fields_old.get('tracer_advective_velocity')
-        if uv is None:
-            uv = fields_old['uv_2d']
+        elev = Function(fields_old['elev_2d'].function_space()).project(fields_old['elev_2d'])
+        uv_tmp = fields_old.get('tracer_advective_velocity')
+        if uv_tmp is None:
+            uv_tmp = fields_old['uv_2d']
+        uv = Function(uv_tmp.function_space()).project(uv_tmp)
 
         uv_p1 = fields_old.get('uv_p1')
         uv_mag = fields_old.get('uv_mag')
@@ -151,16 +153,17 @@ class HorizontalAdvectionTerm(TracerTerm):
                 for bnd_marker in self.boundary_markers:
                     funcs = bnd_conditions.get(bnd_marker)
                     ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                    c_in = solution
+                    c_in = Function(solution.function_space()).project(solution)
                     if funcs is None:
                         f += c_in * (uv[0]*self.normal[0]
                                      + uv[1]*self.normal[1])*self.test*ds_bnd
                     else:
                         c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
-                        uv_av = 0.5*(uv + uv_ext)
+                        c_ext_fn = Function(c_in.function_space()).project(c_ext)
+                        uv_av = Function(uv.function_space()).project(0.5*(uv + uv_ext))
                         un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
                         s = 0.5*(sign(un_av) + 1.0)
-                        c_up = c_in*s + c_ext*(1-s)
+                        c_up = c_in*s + c_ext_fn*(1-s)
                         f += c_up*(uv_av[0]*self.normal[0]
                                    + uv_av[1]*self.normal[1])*self.test*ds_bnd
 
@@ -265,7 +268,7 @@ class TracerEquation2D(Equation):
             condition in the horizontal advection term
         """
         super(TracerEquation2D, self).__init__(function_space)
-
+        
         args = (function_space, bathymetry, use_lax_friedrichs)
         self.add_term(HorizontalAdvectionTerm(*args), 'explicit')
         self.add_term(HorizontalDiffusionTerm(*args), 'explicit')

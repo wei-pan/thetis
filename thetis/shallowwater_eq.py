@@ -892,7 +892,6 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         if isinstance(solution, list):
             uv, eta = solution
         else:
-            print("how many")
             uv = as_vector([solution[0], solution[1]])
             eta = solution[2]          
             #uv, eta = split(solution)

@@ -137,6 +137,7 @@ class ForwardEuler(TimeIntegrator):
 class CrankNicolson(TimeIntegrator):
     """Standard Crank-Nicolson time integration scheme."""
     cfl_coeff = CFL_UNCONDITIONALLY_STABLE
+    
 
     def __init__(self, equation, solution, fields, dt, bnd_conditions=None, solver_parameters={}, theta=0.5, semi_implicit=False):
         """
@@ -156,6 +157,7 @@ class CrankNicolson(TimeIntegrator):
             self.solver_parameters.setdefault('snes_type', 'ksponly')
         else:
             self.solver_parameters.setdefault('snes_type', 'newtonls')
+            
         self.solution_old = Function(self.equation.function_space, name='solution_old')
         # create functions to hold the values of previous time step
         # TODO is this necessary? is self.fields sufficient?
@@ -202,19 +204,19 @@ class CrankNicolson(TimeIntegrator):
 
     def initialize(self, solution):
         """Assigns initial conditions to all required fields."""
-        self.solution_old.project(solution)#, annotate = True)
+        self.solution_old.project(solution)
         # assign values to old functions
         for k in sorted(self.fields_old):
             if isinstance(self.fields[k], FiredrakeFunction):
-                self.fields_old[k].project(self.fields[k])#, annotate = True)
+                self.fields_old[k].project(self.fields[k])
             else:
                 self.fields_old[k].assign(self.fields[k])
 
     def advance(self, t, update_forcings=None):
         """Advances equations for one time step."""
         if update_forcings is not None:
-            update_forcings(t + self.dt)
-        self.solution_old.project(self.solution)#, annotate = True)
+            update_forcings(t + self.dt)           
+        self.solution_old.project(self.solution)
         self.solver.solve()
         # shift time
         for k in sorted(self.fields_old):
@@ -375,7 +377,7 @@ class PressureProjectionPicard(TimeIntegrator):
         # the 'implicit' terms are the gradient (G) and divergence term (C) in the mom. and continuity eqn. resp.
         # where u^* is the velocity solved for in the mom. eqn., and G eta_lagged the gradient term in that eqn.
         print("here")
-        uv_test, eta_test = split(self.equation.test)
+        uv_test, eta_test = self.equation.test.split()
         mass_term_star = inner(uv_test, self.uv_star)*dx + inner(eta_test, eta_old)*dx
         self.F = (
             self.equation.mass_term(self.solution) - mass_term_star

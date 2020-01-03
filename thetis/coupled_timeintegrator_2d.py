@@ -121,7 +121,6 @@ class CoupledTimeIntegrator2D(timeintegrator.TimeIntegratorBase):
 
         Initial conditions are read from :attr:`fields` dictionary.
         """
-
         # solution2d is only provided to make a timeintegrator of just the swe
         # compatible with the 2d coupled timeintegrator
         assert solution2d == self.fields.solution_2d
