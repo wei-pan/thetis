@@ -71,24 +71,24 @@ class TracerTerm(Term):
         funcs = bnd_conditions.get(bnd_id)
 
         if 'elev' in funcs:
-            elev_ext = funcs['elev']
+            elev_ext = Function(funcs['elev'].function_space()).project(funcs['elev'])
         else:
-            elev_ext = elev_in
+            elev_ext = Function(elev_in.function_space()).project(elev_in)
         if 'value' in funcs:
-            c_ext = funcs['value']
+            c_ext = Constant(funcs['value'])
         else:
-            c_ext = c_in
+            c_ext = Function(c_in.function_space()).project(c_in)
         if 'uv' in funcs:
-            uv_ext = funcs['uv']
+            uv_ext = Function(funcs['uv'].function_space()).project(funcs['uv'])
         elif 'flux' in funcs:
             assert self.bathymetry is not None
-            h_ext = elev_ext + self.bathymetry
+            h_ext = Function(elev_ext.function_space()).project(elev_ext + self.bathymetry)
             area = h_ext*self.boundary_len  # NOTE using external data only
-            uv_ext = funcs['flux']/area*self.normal
+            uv_ext = Function(funcs['flux'].function_space()).project(funcs['flux']/area*self.normal)
         elif 'un' in funcs:
-            uv_ext = funcs['un']*self.normal
+            uv_ext = Constant(funcs['un'])*self.normal
         else:
-            uv_ext = uv_in
+            uv_ext = uv_in#Function(uv_in.function_space()).project(uv_in)
 
 
         return c_ext, uv_ext, elev_ext
@@ -118,8 +118,16 @@ class HorizontalAdvectionTerm(TracerTerm):
         uv_tmp = fields_old.get('tracer_advective_velocity')
         if uv_tmp is None:
             uv_tmp = fields_old['uv_2d']
+        #try:
+        #    uv.project(fields_old['uv_2d'])
+        #except NameError:
+        print("called")
+        #uv = Function(fields_old['uv_2d'].function_space()).project(fields_old['uv_2d'])
         uv = Function(uv_tmp.function_space()).project(uv_tmp)
-
+        
+        hor_uv = Function(elev.function_space()).project(uv[0])
+        ver_uv = Function(elev.function_space()).project(uv[1])
+        
         uv_p1 = fields_old.get('uv_p1')
         uv_mag = fields_old.get('uv_mag')
         # FIXME is this an option?
@@ -153,19 +161,21 @@ class HorizontalAdvectionTerm(TracerTerm):
                 for bnd_marker in self.boundary_markers:
                     funcs = bnd_conditions.get(bnd_marker)
                     ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                    c_in = Function(solution.function_space()).project(solution)
+                    c_in = solution
                     if funcs is None:
                         f += c_in * (uv[0]*self.normal[0]
                                      + uv[1]*self.normal[1])*self.test*ds_bnd
                     else:
                         c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
-                        c_ext_fn = Function(c_in.function_space()).project(c_ext)
-                        uv_av = Function(uv.function_space()).project(0.5*(uv + uv_ext))
-                        un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
+                        #c_ext_fn = Function(c_in.function_space()).project(c_ext)
+                        #uv_ext_fn = Function(uv_ext.function_space()).project(uv_ext)
+                        #uv_av = Function(uv.function_space()).project(0.5*(uv + uv_ext_fn))
+                        uv_av_2 = 0.5*(uv + uv_ext)
+                        un_av = self.normal[0]*uv_av_2[0] + self.normal[1]*uv_av_2[1]
                         s = 0.5*(sign(un_av) + 1.0)
-                        c_up = c_in*s + c_ext_fn*(1-s)
-                        f += c_up*(uv_av[0]*self.normal[0]
-                                   + uv_av[1]*self.normal[1])*self.test*ds_bnd
+                        c_up = c_in*s + c_ext*(1-s)
+                        f += c_up*(uv[0]*self.normal[0]
+                                   + uv[1]*self.normal[1])*self.test*ds_bnd
 
         return -f
 

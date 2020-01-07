@@ -165,8 +165,9 @@ class CrankNicolson(TimeIntegrator):
         for k in sorted(self.fields):
             if self.fields[k] is not None:
                 if isinstance(self.fields[k], FiredrakeFunction):
+                    print('here')
                     self.fields_old[k] = Function(
-                        self.fields[k].function_space(), name=self.fields[k].name()+'_old')
+                        self.fields[k].function_space(), name=self.fields[k].name()+'_old').project(self.fields[k])
                 elif isinstance(self.fields[k], FiredrakeConstant):
                     self.fields_old[k] = Constant(self.fields[k])
 
