@@ -405,18 +405,18 @@ class FlowSolver(FrozenClass):
             if h_family_prefix == 'RT':
                 h_degree = self.options.polynomial_degree + 1
 
-            #h_elt = FiniteElement(hfam, h_cell, h_degree, variant='equispaced')
-            #v_elt = FiniteElement('DG', v_cell, self.options.polynomial_degree, variant='equispaced')
-            #elt_uv = HDiv(TensorProductElement(h_elt, v_elt))
-            #h_elt = FiniteElement('DG', h_cell, self.options.polynomial_degree, variant='equispaced')
-            #v_elt = FiniteElement('CG', v_cell, self.options.polynomial_degree+1, variant='equispaced')
-            #elt_w = HDiv(TensorProductElement(h_elt, v_elt))
-            #elt = EnrichedElement(elt_uv, elt_w)
-            #self.function_spaces.U = FunctionSpace(self.mesh, elt)
-            #self.function_spaces.W = FunctionSpace(self.mesh, elt_w)
+            h_elt = FiniteElement(hfam, h_cell, h_degree, variant='equispaced')
+            v_elt = FiniteElement('DG', v_cell, self.options.polynomial_degree, variant='equispaced')
+            elt_uv = HDiv(TensorProductElement(h_elt, v_elt))
+            h_elt = FiniteElement('DG', h_cell, self.options.polynomial_degree, variant='equispaced')
+            v_elt = FiniteElement('CG', v_cell, self.options.polynomial_degree+1, variant='equispaced')
+            elt_w = HDiv(TensorProductElement(h_elt, v_elt))
+            elt = EnrichedElement(elt_uv, elt_w)
+            self.function_spaces.U = FunctionSpace(self.mesh, elt)
+            self.function_spaces.W = FunctionSpace(self.mesh, elt_w)
 
-            self.function_spaces.U = get_functionspace(self.mesh, hfam, h_degree, 'DG', self.options.polynomial_degree, name='U', hdiv=True)
-            self.function_spaces.W = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'CG', self.options.polynomial_degree+1, name='W', hdiv=True)
+            #self.function_spaces.U = get_functionspace(self.mesh, hfam, h_degree, 'DG', self.options.polynomial_degree, name='U', hdiv=True)
+            #self.function_spaces.W = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'CG', self.options.polynomial_degree+1, name='W', hdiv=True)
             self.function_spaces.U_2d = get_functionspace(self.mesh2d, hfam, h_degree, name='U_2d')
         elif self.options.element_family == 'dg-dg':
             self.function_spaces.U = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'DG', self.options.polynomial_degree, name='U', vector=True)
@@ -624,6 +624,11 @@ class FlowSolver(FrozenClass):
             self.create_fields()
         self._isfrozen = False
 
+        self.uv_averager = VelocityIntegrator(self.fields.uv_3d,
+                                              self.fields.uv_dav_2d.view_3d,
+                                              bathymetry=self.fields.bathymetry_2d.view_3d,
+                                              elevation=self.fields.elev_cg_3d)
+
         if self.options.log_output and not self.options.no_exports:
             logfile = os.path.join(create_directory(self.options.output_directory), 'log')
             filehandler = logging.logging.FileHandler(logfile, mode='w')
@@ -740,22 +745,10 @@ class FlowSolver(FrozenClass):
             self.exporters['hdf5'] = e
 
         # ----- Operators
-        uv_dav_2d = self.fields.uv_dav_2d.view_3d
-        e_x = as_vector((1, 0))
-        e_y = as_vector((0, 1))
-        #tot_uv_3d = self.fields.uv_3d + \
-            #as_vector((inner(uv_dav_2d, e_x), inner(uv_dav_2d, e_y), 0))
-        tot_uv_3d = self.fields.uv_3d + self.fields.uv_dav_2d.view_3d
         self.w_solver = VerticalVelocitySolver(self.fields.w_3d,
-                                               tot_uv_3d,
+                                               self.uv_averager.get_total_uv_3d(),
                                                self.fields.bathymetry_2d.view_3d,
                                                self.eq_momentum.bnd_functions)
-        uv_source = as_vector((self.fields.uv_3d[0], self.fields.uv_3d[1]))
-        self.uv_averager = Projector(self.fields.uv_3d, self.fields.uv_dav_2d.view_3d)
-        # self.uv_averager = VelocityIntegrator(self.fields.uv_3d,
-        #                                       self.fields.uv_dav_2d.view_3d,
-        #                                       bathymetry=self.fields.bathymetry_2d.view_3d,
-        #                                       elevation=self.fields.elev_cg_3d)
         if self.options.use_baroclinic_formulation:
             if self.options.solve_salinity:
                 s = self.fields.salt_3d
@@ -790,7 +783,6 @@ class FlowSolver(FrozenClass):
                 self.fields, self.fields.bathymetry_2d.view_3d, self.options,
                 self.bnd_functions['momentum'],
                 solver_parameters=self.options.timestepper_options.solver_parameters_momentum_explicit)
-        self.velocity_splitter = VelocitySplitter(self.fields.uv_3d, self.fields.uv_dav_2d)
         self.uv_mag_solver = VelocityMagnitudeSolver(self.fields.uv_mag_3d, u=self.fields.uv_3d)
         if self.options.use_bottom_friction:
             self.extract_uv_bottom = SubFunctionExtractor(self.fields.uv_p1_3d, self.fields.uv_bottom_2d,
@@ -900,11 +892,11 @@ class FlowSolver(FrozenClass):
         """
         self.callbacks.evaluate(mode='export', index=self.i_export)
         # set uv to total uv instead of deviation from depth average
-        #self.velocity_splitter.add_average_to_uv()
+        #self.uv_averager.add_average_to_uv()
         for e in self.exporters.values():
             e.export()
         # restore uv_3d
-        #self.velocity_splitter.remove_average_from_uv()
+        #self.uv_averager.remove_average_from_uv()
 
     def load_state(self, i_export, outputdir=None, t=None, iteration=None):
         """

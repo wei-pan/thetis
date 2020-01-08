@@ -62,13 +62,13 @@ class CoupledTimeIntegratorBase(timeintegrator.TimeIntegratorBase):
         """Computes depth averaged velocity and removes it from the 3D velocity field"""
         with timed_stage('aux_uv_coupling'):
             # compute depth averaged 3D velocity
-            self.solver.uv_averager.project()  # uv -> uv_dav_2d
-            self.solver.velocity_splitter.remove_average_from_uv()
+            self.solver.uv_averager.solve()  # uv -> uv_dav_2d
+            self.solver.uv_averager.remove_average_from_uv()
 
     def _copy_uv_2d_to_3d(self):
         """Copies uv_2d to uv_dav_3d"""
         with timed_stage('aux_uv_coupling'):
-            self.solver.fields.uv_dav_2d.assign(self.fields.uv_2d)
+            self.solver.uv_averager.update_uv_dav_2d(self.fields.uv_2d)
 
     def _update_2d_coupling_term(self):
         """Update split_residual_2d field for 2D-3D coupling"""
@@ -194,9 +194,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
 
     def _get_uv_dav_3d(self):
         if 'uv_dav_2d' in self.fields:
-            # uv_dav = self.fields.uv_dav_2d.view_3d
-            # return as_vector((uv_dav[0], uv_dav[1], 0.0))
-            return self.fields.uv_dav_2d.view_3d
+            return self.solver.uv_averager.get_total_uv_3d()
         return None
 
     def _create_swe_integrator(self):

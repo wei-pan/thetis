@@ -403,38 +403,48 @@ class VerticalVelocitySolver(object):
         self.dS_v = dS_v(degree=self.quad_degree)
         self.ds_surf = ds_surf(degree=self.quad_degree)
 
-        # NOTE weak dw/dz
-        a = tri[2]*test[2]*normal[2]*ds_surf + \
-            avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+        hdiv = isinstance(fs.ufl_element(), (ufl.HDivElement, ufl.EnrichedElement))
 
-        # NOTE weak div(uv)
-        uv_star = avg(uv)
-        # NOTE in the case of mimetic uv the div must be taken over all components
-        l_v_facet = (uv_star[0]*jump(test[2], normal[0])
-                     + uv_star[1]*jump(test[2], normal[1])
-                     + uv_star[2]*jump(test[2], normal[2]))*self.dS_v
-        l_h_facet = (uv_star[0]*jump(test[2], normal[0])
-                     + uv_star[1]*jump(test[2], normal[1])
-                     + uv_star[2]*jump(test[2], normal[2]))*self.dS_h
-        l_surf = (uv[0]*normal[0]
-                  + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
-        l_vol = inner(uv, nabla_grad(test[2]))*self.dx
-        l = l_vol - l_v_facet - l_h_facet - l_surf
-        for bnd_marker in sorted(mesh.exterior_facets.unique_markers):
-            funcs = boundary_funcs.get(bnd_marker)
-            ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
-            if funcs is None:
-                # assume land boundary
-                continue
-            else:
-                # use symmetry condition
-                l += -(uv[0]*normal[0] + uv[1]*normal[1])*test[2]*ds_bnd
+        if not hdiv:
+            # NOTE weak dw/dz
+            a = tri[2]*test[2]*normal[2]*ds_surf + \
+                avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+
+            # NOTE weak div(uv)
+            uv_star = avg(uv)
+            # NOTE in the case of mimetic uv the div must be taken over all components
+            l_v_facet = (uv_star[0]*jump(test[2], normal[0])
+                        + uv_star[1]*jump(test[2], normal[1])
+                        + uv_star[2]*jump(test[2], normal[2]))*self.dS_v
+            l_h_facet = (uv_star[0]*jump(test[2], normal[0])
+                        + uv_star[1]*jump(test[2], normal[1])
+                        + uv_star[2]*jump(test[2], normal[2]))*self.dS_h
+            l_surf = (uv[0]*normal[0]
+                    + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
+            l_vol = inner(uv, nabla_grad(test[2]))*self.dx
+            l = l_vol - l_v_facet - l_h_facet - l_surf
+            for bnd_marker in sorted(mesh.exterior_facets.unique_markers):
+                funcs = boundary_funcs.get(bnd_marker)
+                ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
+                if funcs is None:
+                    # assume land boundary
+                    continue
+                else:
+                    # use symmetry condition
+                    l += -(uv[0]*normal[0] + uv[1]*normal[1])*test[2]*ds_bnd
+        else:
+            a = tri[2]*test[2]*normal[2]*ds_surf + \
+                avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+            l_vol = -div(uv)*test[2]*self.dx
+            l_surf = (uv[0]*normal[0]
+                      + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
+            l = l_vol #- l_surf
 
         # NOTE For ALE mesh constant_jacobian should be False
         # however the difference is very small as A is nearly independent of
         # mesh stretching: only the normals vary in time
         self.prob = LinearVariationalProblem(a, l, solution,
-                                             constant_jacobian=True)
+                                             constant_jacobian=False)
         self.solver = LinearVariationalSolver(self.prob,
                                               solver_parameters=solver_parameters)
 
@@ -533,6 +543,69 @@ class VelocityIntegrator(object):
         :kwarg elevation: 3D field defining the free surface elevation
         :kwarg dict solver_parameters: PETSc solver options
         """
+        space = output.function_space()
+        elem = space.ufl_element()
+        if isinstance(elem, ufl.MixedElement):
+            elem = elem.sub_elements()[0]
+        if isinstance(elem, (ufl.HDivElement, ufl.HCurlElement)):
+            elem = elem._element
+        if isinstance(elem, ufl.VectorElement):
+            elem = elem.sub_elements()[0]  # take the elem of first component
+        if isinstance(elem, ufl.EnrichedElement):
+            elem = elem._elements[0]
+        assert isinstance(elem, ufl.TensorProductElement)
+        a, b = elem.sub_elements()
+        horiz_family = a.family()
+        vert_family = b.family()
+        if horiz_family in ['Discontinuous Lagrange', 'DQ']:
+            self.integrator = VelocityIntegratorDG(
+                input, output, average=average,
+                bathymetry=bathymetry, elevation=elevation,
+                solver_parameters=solver_parameters
+            )
+        elif horiz_family in ['Raviart-Thomas', 'RTCF']:
+            self.integrator = VelocityIntegratorRT(
+                input, output, average=average,
+                bathymetry=bathymetry, elevation=elevation,
+                solver_parameters=solver_parameters
+            )
+        else:
+            raise NotImplementedError('Unsupported function space: {:}'.format(horiz_family))
+
+    def solve(self):
+        """
+        Computes the integral and stores it in the output field.
+        """
+        self.integrator.solve()
+
+    def remove_average_from_uv(self):
+        self.integrator.remove_average_from_uv()
+
+    def add_average_to_uv(self):
+        self.integrator.add_average_to_uv()
+
+    def update_uv_dav_2d(self, source):
+        self.integrator.update_uv_dav_2d(source)
+
+    def get_total_uv_3d(self):
+        return self.integrator.get_total_uv_3d()
+
+
+class VelocityIntegratorDG(object):
+    """
+    Computes vertical integral (or average) of a field.
+
+    """
+    def __init__(self, input, output, average=True,
+                 bathymetry=None, elevation=None, solver_parameters={}):
+        """
+        :arg input: 3D velocity field to integrate
+        :arg output: Target 2D velocity field, extended to 3D domain
+        :kwarg average: If True computes the vertical average instead. Requires bathymetry and elevation fields
+        :kwarg bathymetry: 3D field defining the bathymetry
+        :kwarg elevation: 3D field defining the free surface elevation
+        :kwarg dict solver_parameters: PETSc solver options
+        """
 
         # solver_parameters.setdefault('snes_type', 'ksponly')
         # solver_parameters.setdefault('ksp_type', 'preonly')
@@ -541,6 +614,7 @@ class VelocityIntegrator(object):
         # solver_parameters.setdefault('sub_pc_type', 'ilu')
         #solver_parameters.setdefault('snes_monitor', None)
 
+        self.input = input
         self.output = output
         space = output.function_space()
         mesh = space.mesh()
@@ -549,7 +623,7 @@ class VelocityIntegrator(object):
         normal = FacetNormal(mesh)
 
         elm = input.function_space().ufl_element()
-        hdiv = isinstance(elm, ufl.HDivElement)
+        hdiv = isinstance(elm, (ufl.HDivElement, ufl.EnrichedElement))
 
         # restrict velocity to horizontal plane
         if hdiv:
@@ -585,6 +659,82 @@ class VelocityIntegrator(object):
         Computes the integral and stores it in the output field.
         """
         self.solver.solve()
+
+    def _get_uv_dav_3d(self):
+        return as_vector((self.output[0], self.output[1], 0))
+
+    def remove_average_from_uv(self):
+        self.input.project(self.input - self._get_uv_dav_3d())
+
+    def add_average_to_uv(self):
+        self.input.project(self.input + self._get_uv_dav_3d())
+
+    def update_uv_dav_2d(self, source):
+        self.output.source.project(source)
+
+    def get_total_uv_3d(self):
+        return self.input + self._get_uv_dav_3d()
+
+
+class VelocityIntegratorRT(object):
+    """
+    Computes vertical integral (or average) of a field.
+
+    """
+    def __init__(self, input, output, average=True,
+                 bathymetry=None, elevation=None, solver_parameters={}):
+        """
+        :arg input: 3D velocity field to integrate
+        :arg output: Target 2D velocity field, extended to 3D domain
+        :kwarg average: If True computes the vertical average instead. Requires bathymetry and elevation fields
+        :kwarg bathymetry: 3D field defining the bathymetry
+        :kwarg elevation: 3D field defining the free surface elevation
+        :kwarg dict solver_parameters: PETSc solver options
+        """
+
+        # solver_parameters.setdefault('snes_type', 'ksponly')
+        # solver_parameters.setdefault('ksp_type', 'preonly')
+        # solver_parameters.setdefault('pc_type', 'bjacobi')
+        # solver_parameters.setdefault('sub_ksp_type', 'preonly')
+        # solver_parameters.setdefault('sub_pc_type', 'ilu')
+        #solver_parameters.setdefault('snes_monitor', None)
+
+        self.input = input
+        self.output = output
+        space = output.function_space()
+        mesh = space.mesh()
+        mesh2d = self.output.source.function_space().mesh()
+        layers = mesh.topology.layers
+
+        self.fs_dg_2d = VectorFunctionSpace(mesh2d, 'DG', 2)
+        self.uv_dg_2d = Function(self.fs_dg_2d, name='f_dg_2d')
+        self.fs_dg_r_3d = VectorFunctionSpace(mesh, 'DG', 2, vfamily='R', vdegree=0)
+        self.uv_dg_r_3d = Function(self.fs_dg_r_3d, name='f_dg_r_3d')
+
+        self.projector_dav = Projector(input, self.uv_dg_r_3d, constant_jacobian=False)
+        self.projector_output = Projector(self.uv_dg_2d, self.output.source)
+
+    def solve(self):
+        """
+        Computes the integral and stores it in the output field.
+        """
+        self.projector_dav.project()
+        self.uv_dg_2d.dat.data[:, :] = self.uv_dg_r_3d.dat.data[:, :2]
+        self.projector_output.project()
+
+    def remove_average_from_uv(self):
+        self.input.project(self.input - self.uv_dg_r_3d)
+
+    def add_average_to_uv(self):
+        self.input.project(self.input + self.uv_dg_r_3d)
+
+    def update_uv_dav_2d(self, source):
+        self.uv_dg_2d.project(source)
+        self.uv_dg_r_3d.dat.data[:, :2] = self.uv_dg_2d.dat.data[:, :]
+        self.uv_dg_r_3d.dat.data[:, 2] = 0
+
+    def get_total_uv_3d(self):
+        return self.input + self.uv_dg_r_3d
 
 
 class DensitySolver(object):
