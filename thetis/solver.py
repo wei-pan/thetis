@@ -397,11 +397,24 @@ class FlowSolver(FrozenClass):
         if self.options.element_family in ['rt-dg', 'bdm-dg']:
             h_family_prefix = self.options.element_family.split('-')[0].upper()
             h_family_suffix = {'triangle': 'F', 'quadrilateral': 'CF'}
-            h_cell = self.mesh2d.ufl_cell().cellname()
-            hfam = h_family_prefix + h_family_suffix[h_cell]
+            #h_cell = self.mesh2d.ufl_cell().cellname()
+            h_cell, v_cell = self.mesh.ufl_cell().sub_cells()
+            h_cell_name = h_cell.cellname()
+            hfam = h_family_prefix + h_family_suffix[h_cell_name]
             h_degree = self.options.polynomial_degree
             if h_family_prefix == 'RT':
                 h_degree = self.options.polynomial_degree + 1
+
+            #h_elt = FiniteElement(hfam, h_cell, h_degree, variant='equispaced')
+            #v_elt = FiniteElement('DG', v_cell, self.options.polynomial_degree, variant='equispaced')
+            #elt_uv = HDiv(TensorProductElement(h_elt, v_elt))
+            #h_elt = FiniteElement('DG', h_cell, self.options.polynomial_degree, variant='equispaced')
+            #v_elt = FiniteElement('CG', v_cell, self.options.polynomial_degree+1, variant='equispaced')
+            #elt_w = HDiv(TensorProductElement(h_elt, v_elt))
+            #elt = EnrichedElement(elt_uv, elt_w)
+            #self.function_spaces.U = FunctionSpace(self.mesh, elt)
+            #self.function_spaces.W = FunctionSpace(self.mesh, elt_w)
+
             self.function_spaces.U = get_functionspace(self.mesh, hfam, h_degree, 'DG', self.options.polynomial_degree, name='U', hdiv=True)
             self.function_spaces.W = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'CG', self.options.polynomial_degree+1, name='W', hdiv=True)
             self.function_spaces.U_2d = get_functionspace(self.mesh2d, hfam, h_degree, name='U_2d')
@@ -728,16 +741,21 @@ class FlowSolver(FrozenClass):
 
         # ----- Operators
         uv_dav_2d = self.fields.uv_dav_2d.view_3d
-        tot_uv_3d = self.fields.uv_3d + as_vector((uv_dav_2d[0], uv_dav_2d[1], 0))
+        e_x = as_vector((1, 0))
+        e_y = as_vector((0, 1))
+        #tot_uv_3d = self.fields.uv_3d + \
+            #as_vector((inner(uv_dav_2d, e_x), inner(uv_dav_2d, e_y), 0))
+        tot_uv_3d = self.fields.uv_3d + self.fields.uv_dav_2d.view_3d
         self.w_solver = VerticalVelocitySolver(self.fields.w_3d,
                                                tot_uv_3d,
                                                self.fields.bathymetry_2d.view_3d,
                                                self.eq_momentum.bnd_functions)
         uv_source = as_vector((self.fields.uv_3d[0], self.fields.uv_3d[1]))
-        self.uv_averager = VelocityIntegrator(self.fields.uv_3d,
-                                              self.fields.uv_dav_2d.view_3d,
-                                              bathymetry=self.fields.bathymetry_2d.view_3d,
-                                              elevation=self.fields.elev_cg_3d)
+        self.uv_averager = Projector(self.fields.uv_3d, self.fields.uv_dav_2d.view_3d)
+        # self.uv_averager = VelocityIntegrator(self.fields.uv_3d,
+        #                                       self.fields.uv_dav_2d.view_3d,
+        #                                       bathymetry=self.fields.bathymetry_2d.view_3d,
+        #                                       elevation=self.fields.elev_cg_3d)
         if self.options.use_baroclinic_formulation:
             if self.options.solve_salinity:
                 s = self.fields.salt_3d
@@ -882,11 +900,11 @@ class FlowSolver(FrozenClass):
         """
         self.callbacks.evaluate(mode='export', index=self.i_export)
         # set uv to total uv instead of deviation from depth average
-        self.velocity_splitter.add_average_to_uv()
+        #self.velocity_splitter.add_average_to_uv()
         for e in self.exporters.values():
             e.export()
         # restore uv_3d
-        self.velocity_splitter.remove_average_from_uv()
+        #self.velocity_splitter.remove_average_from_uv()
 
     def load_state(self, i_export, outputdir=None, t=None, iteration=None):
         """

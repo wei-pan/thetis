@@ -384,11 +384,11 @@ class VerticalVelocitySolver(object):
             equation. Provides external values of uv (if any).
         :kwarg dict solver_parameters: PETSc solver options
         """
-        solver_parameters.setdefault('snes_type', 'ksponly')
-        solver_parameters.setdefault('ksp_type', 'preonly')
-        solver_parameters.setdefault('pc_type', 'bjacobi')
-        solver_parameters.setdefault('sub_ksp_type', 'preonly')
-        solver_parameters.setdefault('sub_pc_type', 'ilu')
+        #solver_parameters.setdefault('snes_type', 'ksponly')
+        #solver_parameters.setdefault('ksp_type', 'preonly')
+        #solver_parameters.setdefault('pc_type', 'bjacobi')
+        #solver_parameters.setdefault('sub_ksp_type', 'preonly')
+        #solver_parameters.setdefault('sub_pc_type', 'ilu')
         fs = solution.function_space()
         mesh = fs.mesh()
         test = TestFunction(fs)
@@ -533,11 +533,13 @@ class VelocityIntegrator(object):
         :kwarg elevation: 3D field defining the free surface elevation
         :kwarg dict solver_parameters: PETSc solver options
         """
-        solver_parameters.setdefault('snes_type', 'ksponly')
-        solver_parameters.setdefault('ksp_type', 'preonly')
-        solver_parameters.setdefault('pc_type', 'bjacobi')
-        solver_parameters.setdefault('sub_ksp_type', 'preonly')
-        solver_parameters.setdefault('sub_pc_type', 'ilu')
+
+        # solver_parameters.setdefault('snes_type', 'ksponly')
+        # solver_parameters.setdefault('ksp_type', 'preonly')
+        # solver_parameters.setdefault('pc_type', 'bjacobi')
+        # solver_parameters.setdefault('sub_ksp_type', 'preonly')
+        # solver_parameters.setdefault('sub_pc_type', 'ilu')
+        #solver_parameters.setdefault('snes_monitor', None)
 
         self.output = output
         space = output.function_space()
@@ -546,9 +548,16 @@ class VelocityIntegrator(object):
         phi = TestFunction(space)
         normal = FacetNormal(mesh)
 
+        elm = input.function_space().ufl_element()
+        hdiv = isinstance(elm, ufl.HDivElement)
+
         # restrict velocity to horizontal plane
-        input_xy = as_vector((input[0], input[1]))
-        bnd_value = Constant((0, 0))
+        if hdiv:
+            input_xy = input
+            bnd_value = Constant((0, 0, 0))
+        else:
+            input_xy = as_vector((input[0], input[1]))
+            bnd_value = Constant((0, 0))
 
         # define measures with a reasonable quadrature degree
         self.quad_degree = (2, 2)
@@ -938,7 +947,10 @@ def extend_function_to_3d(func, mesh_extruded):
         fs_extended = get_functionspace(mesh_extruded, family, degree, 'R', 0,
                                         dim=2, vector=True)
     else:
-        fs_extended = get_functionspace(mesh_extruded, family, degree, 'R', 0)
+        hdiv = family in ['Raviart-Thomas', 'RTCF',
+                          'Brezzi-Douglas-Marini', 'BDMCF']
+        fs_extended = get_functionspace(mesh_extruded, family, degree, 'R', 0,
+                                        hdiv=hdiv)
     func_extended = Function(fs_extended, name=name, val=func.dat.data)
     func_extended.source = func
     return func_extended
