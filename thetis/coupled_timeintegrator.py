@@ -62,7 +62,7 @@ class CoupledTimeIntegratorBase(timeintegrator.TimeIntegratorBase):
         """Computes depth averaged velocity and removes it from the 3D velocity field"""
         with timed_stage('aux_uv_coupling'):
             # compute depth averaged 3D velocity
-            self.solver.uv_averager.project()  # uv -> uv_dav_2d
+            self.solver.uv_averager.solve()  # uv -> uv_dav_2d
             self.solver.velocity_splitter.remove_average_from_uv()
 
     def _copy_uv_2d_to_3d(self):

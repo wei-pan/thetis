@@ -734,7 +734,10 @@ class FlowSolver(FrozenClass):
                                                self.fields.bathymetry_2d.view_3d,
                                                self.eq_momentum.bnd_functions)
         uv_source = as_vector((self.fields.uv_3d[0], self.fields.uv_3d[1]))
-        self.uv_averager = Projector(uv_source, self.fields.uv_dav_2d.view_3d, use_slate_for_inverse=False)
+        self.uv_averager = VelocityIntegrator(self.fields.uv_3d,
+                                              self.fields.uv_dav_2d.view_3d,
+                                              bathymetry=self.fields.bathymetry_2d.view_3d,
+                                              elevation=self.fields.elev_cg_3d)
         if self.options.use_baroclinic_formulation:
             if self.options.solve_salinity:
                 s = self.fields.salt_3d

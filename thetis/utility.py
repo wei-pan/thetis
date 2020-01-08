@@ -518,6 +518,66 @@ class VerticalIntegrator(object):
         self.solver.solve()
 
 
+class VelocityIntegrator(object):
+    """
+    Computes vertical integral (or average) of a field.
+
+    """
+    def __init__(self, input, output, average=True,
+                 bathymetry=None, elevation=None, solver_parameters={}):
+        """
+        :arg input: 3D velocity field to integrate
+        :arg output: Target 2D velocity field, extended to 3D domain
+        :kwarg average: If True computes the vertical average instead. Requires bathymetry and elevation fields
+        :kwarg bathymetry: 3D field defining the bathymetry
+        :kwarg elevation: 3D field defining the free surface elevation
+        :kwarg dict solver_parameters: PETSc solver options
+        """
+        solver_parameters.setdefault('snes_type', 'ksponly')
+        solver_parameters.setdefault('ksp_type', 'preonly')
+        solver_parameters.setdefault('pc_type', 'bjacobi')
+        solver_parameters.setdefault('sub_ksp_type', 'preonly')
+        solver_parameters.setdefault('sub_pc_type', 'ilu')
+
+        self.output = output
+        space = output.function_space()
+        mesh = space.mesh()
+        tri = TrialFunction(space)
+        phi = TestFunction(space)
+        normal = FacetNormal(mesh)
+
+        # restrict velocity to horizontal plane
+        input_xy = as_vector((input[0], input[1]))
+        bnd_value = Constant((0, 0))
+
+        # define measures with a reasonable quadrature degree
+        self.quad_degree = (2, 2)
+        self.dx = dx(degree=self.quad_degree)
+        self.dS_h = dS_h(degree=self.quad_degree)
+        self.ds_surf = ds_surf(degree=self.quad_degree)
+        self.ds_bottom = ds_bottom(degree=self.quad_degree)
+
+        bnd_term = normal[2]*inner(bnd_value, phi)*self.ds_bottom
+        mass_bnd_term = normal[2]*inner(tri, phi)*self.ds_surf
+
+        self.a = -inner(Dx(phi, 2), tri)*self.dx + mass_bnd_term
+        up_value = tri('+')
+
+        if average:
+            source = input_xy/(elevation + bathymetry)
+        else:
+            source = input_xy
+        self.l = inner(source, phi)*self.dx + bnd_term
+        self.prob = LinearVariationalProblem(self.a, self.l, output, constant_jacobian=average)
+        self.solver = LinearVariationalSolver(self.prob, solver_parameters=solver_parameters)
+
+    def solve(self):
+        """
+        Computes the integral and stores it in the output field.
+        """
+        self.solver.solve()
+
+
 class DensitySolver(object):
     r"""
     Computes density from salinity and temperature using the equation of state.
