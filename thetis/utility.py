@@ -403,32 +403,42 @@ class VerticalVelocitySolver(object):
         self.dS_v = dS_v(degree=self.quad_degree)
         self.ds_surf = ds_surf(degree=self.quad_degree)
 
-        # NOTE weak dw/dz
-        a = tri[2]*test[2]*normal[2]*ds_surf + \
-            avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+        hdiv = isinstance(fs.ufl_element(), (ufl.HDivElement, ufl.EnrichedElement))
 
-        # NOTE weak div(uv)
-        uv_star = avg(uv)
-        # NOTE in the case of mimetic uv the div must be taken over all components
-        l_v_facet = (uv_star[0]*jump(test[2], normal[0])
-                     + uv_star[1]*jump(test[2], normal[1])
-                     + uv_star[2]*jump(test[2], normal[2]))*self.dS_v
-        l_h_facet = (uv_star[0]*jump(test[2], normal[0])
-                     + uv_star[1]*jump(test[2], normal[1])
-                     + uv_star[2]*jump(test[2], normal[2]))*self.dS_h
-        l_surf = (uv[0]*normal[0]
-                  + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
-        l_vol = inner(uv, nabla_grad(test[2]))*self.dx
-        l = l_vol - l_v_facet - l_h_facet - l_surf
-        for bnd_marker in sorted(mesh.exterior_facets.unique_markers):
-            funcs = boundary_funcs.get(bnd_marker)
-            ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
-            if funcs is None:
-                # assume land boundary
-                continue
-            else:
-                # use symmetry condition
-                l += -(uv[0]*normal[0] + uv[1]*normal[1])*test[2]*ds_bnd
+        if not hdiv:
+            # NOTE weak dw/dz
+            a = tri[2]*test[2]*normal[2]*ds_surf + \
+                avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+
+            # NOTE weak div(uv)
+            uv_star = avg(uv)
+            # NOTE in the case of mimetic uv the div must be taken over all components
+            l_v_facet = (uv_star[0]*jump(test[2], normal[0])
+                        + uv_star[1]*jump(test[2], normal[1])
+                        + uv_star[2]*jump(test[2], normal[2]))*self.dS_v
+            l_h_facet = (uv_star[0]*jump(test[2], normal[0])
+                        + uv_star[1]*jump(test[2], normal[1])
+                        + uv_star[2]*jump(test[2], normal[2]))*self.dS_h
+            l_surf = (uv[0]*normal[0]
+                    + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
+            l_vol = inner(uv, nabla_grad(test[2]))*self.dx
+            l = l_vol - l_v_facet - l_h_facet - l_surf
+            for bnd_marker in sorted(mesh.exterior_facets.unique_markers):
+                funcs = boundary_funcs.get(bnd_marker)
+                ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
+                if funcs is None:
+                    # assume land boundary
+                    continue
+                else:
+                    # use symmetry condition
+                    l += -(uv[0]*normal[0] + uv[1]*normal[1])*test[2]*ds_bnd
+        else:
+            a = tri[2]*test[2]*normal[2]*ds_surf + \
+                avg(tri[2])*jump(test[2], normal[2])*dS_h - Dx(test[2], 2)*tri[2]*self.dx
+            l_vol = -div(uv)*test[2]*self.dx
+            l_surf = (uv[0]*normal[0]
+                      + uv[1]*normal[1] + uv[2]*normal[2])*test[2]*self.ds_surf
+            l = l_vol #- l_surf
 
         # NOTE For ALE mesh constant_jacobian should be False
         # however the difference is very small as A is nearly independent of

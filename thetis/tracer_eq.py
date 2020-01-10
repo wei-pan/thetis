@@ -145,51 +145,55 @@ class HorizontalAdvectionTerm(TracerTerm):
         # FIXME is this an option?
         lax_friedrichs_factor = fields_old.get('lax_friedrichs_tracer_scaling_factor')
 
+        by_parts = self.horizontal_dg
         f = 0
-        f += -solution*inner(uv, nabla_grad(self.test))*self.dx
-        if self.horizontal_dg:
-            # add interface term
-            uv_av = avg(uv)
-            un_av = (uv_av[0]*self.normal('-')[0]
-                     + uv_av[1]*self.normal('-')[1])
-            s = 0.5*(sign(un_av) + 1.0)
-            c_up = solution('-')*s + solution('+')*(1-s)
-            f += c_up*(uv_av[0]*jump(self.test, self.normal[0])
-                       + uv_av[1]*jump(self.test, self.normal[1])
-                       + uv_av[2]*jump(self.test, self.normal[2]))*(self.dS_v)
-            f += c_up*(uv_av[0]*jump(self.test, self.normal[0])
-                       + uv_av[1]*jump(self.test, self.normal[1])
-                       + uv_av[2]*jump(self.test, self.normal[2]))*(self.dS_h)
-            # Lax-Friedrichs stabilization
-            if self.use_lax_friedrichs:
-                if uv_p1 is not None:
-                    gamma = 0.5*abs((avg(uv_p1)[0]*self.normal('-')[0]
-                                     + avg(uv_p1)[1]*self.normal('-')[1]))*lax_friedrichs_factor
-                elif uv_mag is not None:
-                    gamma = 0.5*avg(uv_mag)*lax_friedrichs_factor
-                else:
-                    raise Exception('either uv_p1 or uv_mag must be given')
-                f += gamma*dot(jump(self.test), jump(solution))*(self.dS_v + self.dS_h)
-            if bnd_conditions is not None:
-                for bnd_marker in self.boundary_markers:
-                    funcs = bnd_conditions.get(bnd_marker)
-                    ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
-                    if funcs is None:
-                        continue
+        if by_parts:
+            f += -solution*inner(uv, nabla_grad(self.test))*self.dx
+            if self.horizontal_dg:
+                # add interface term
+                uv_av = avg(uv)
+                un_av = (uv_av[0]*self.normal('-')[0]
+                        + uv_av[1]*self.normal('-')[1])
+                s = 0.5*(sign(un_av) + 1.0)
+                c_up = solution('-')*s + solution('+')*(1-s)
+                f += c_up*(uv_av[0]*jump(self.test, self.normal[0])
+                        + uv_av[1]*jump(self.test, self.normal[1])
+                        + uv_av[2]*jump(self.test, self.normal[2]))*(self.dS_v)
+                f += c_up*(uv_av[0]*jump(self.test, self.normal[0])
+                        + uv_av[1]*jump(self.test, self.normal[1])
+                        + uv_av[2]*jump(self.test, self.normal[2]))*(self.dS_h)
+                # Lax-Friedrichs stabilization
+                if self.use_lax_friedrichs:
+                    if uv_p1 is not None:
+                        gamma = 0.5*abs((avg(uv_p1)[0]*self.normal('-')[0]
+                                        + avg(uv_p1)[1]*self.normal('-')[1]))*lax_friedrichs_factor
+                    elif uv_mag is not None:
+                        gamma = 0.5*avg(uv_mag)*lax_friedrichs_factor
                     else:
-                        c_in = solution
-                        c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
-                        # add interior tracer flux
-                        f += c_in*(uv[0]*self.normal[0]
-                                   + uv[1]*self.normal[1])*self.test*ds_bnd
-                        # add boundary contribution if inflow
-                        uv_av = 0.5*(uv + uv_ext)
-                        un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
-                        s = 0.5*(sign(un_av) + 1.0)
-                        f += (1-s)*(c_ext - c_in)*un_av*self.test*ds_bnd
+                        raise Exception('either uv_p1 or uv_mag must be given')
+                    f += gamma*dot(jump(self.test), jump(solution))*(self.dS_v + self.dS_h)
+                if bnd_conditions is not None:
+                    for bnd_marker in self.boundary_markers:
+                        funcs = bnd_conditions.get(bnd_marker)
+                        ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
+                        if funcs is None:
+                            continue
+                        else:
+                            c_in = solution
+                            c_ext, uv_ext, eta_ext = self.get_bnd_functions(c_in, uv, elev, bnd_marker, bnd_conditions)
+                            # add interior tracer flux
+                            f += c_in*(uv[0]*self.normal[0]
+                                    + uv[1]*self.normal[1])*self.test*ds_bnd
+                            # add boundary contribution if inflow
+                            uv_av = 0.5*(uv + uv_ext)
+                            un_av = self.normal[0]*uv_av[0] + self.normal[1]*uv_av[1]
+                            s = 0.5*(sign(un_av) + 1.0)
+                            f += (1-s)*(c_ext - c_in)*un_av*self.test*ds_bnd
 
-        if self.use_symmetric_surf_bnd:
-            f += solution*(uv[0]*self.normal[0] + uv[1]*self.normal[1])*self.test*ds_surf
+            if self.use_symmetric_surf_bnd:
+                f += solution*(uv[0]*self.normal[0] + uv[1]*self.normal[1])*self.test*ds_surf
+        else:
+            f += inner(div(solution*uv), self.test)*self.dx
         return -f
 
 
@@ -224,21 +228,24 @@ class VerticalAdvectionTerm(TracerTerm):
         vertvelo = w[2]
         if w_mesh is not None:
             vertvelo = w[2] - w_mesh
-        f = 0
-        f += -solution*vertvelo*Dx(self.test, 2)*self.dx
-        if self.vertical_dg:
-            w_av = avg(vertvelo)
-            s = 0.5*(sign(w_av*self.normal[2]('-')) + 1.0)
-            c_up = solution('-')*s + solution('+')*(1-s)
-            f += c_up*w_av*jump(self.test, self.normal[2])*self.dS_h
-            if self.use_lax_friedrichs:
-                # Lax-Friedrichs
-                gamma = 0.5*abs(w_av*self.normal('-')[2])*lax_friedrichs_factor
-                f += gamma*dot(jump(self.test), jump(solution))*self.dS_h
 
-        # NOTE Bottom impermeability condition is naturally satisfied by the definition of w
-        # NOTE imex solver fails with this in tracerBox example
-        f += solution*vertvelo*self.normal[2]*self.test*self.ds_surf
+        by_parts = self.vertical_dg
+        f = 0
+        if by_parts:
+            f += -solution*vertvelo*Dx(self.test, 2)*self.dx
+            if self.vertical_dg:
+                w_av = avg(vertvelo)
+                s = 0.5*(sign(w_av*self.normal[2]('-')) + 1.0)
+                c_up = solution('-')*s + solution('+')*(1-s)
+                f += c_up*w_av*jump(self.test, self.normal[2])*self.dS_h
+                if self.use_lax_friedrichs:
+                    # Lax-Friedrichs
+                    gamma = 0.5*abs(w_av*self.normal('-')[2])*lax_friedrichs_factor
+                    f += gamma*dot(jump(self.test), jump(solution))*self.dS_h
+
+            f += solution*vertvelo*self.normal[2]*self.test*self.ds_surf
+        else:
+            f += Dx(solution*vertvelo, 2)*self.test*self.dx
         return -f
 
 
