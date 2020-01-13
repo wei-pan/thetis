@@ -666,3 +666,5 @@ class ModelOptions3d(CommonModelOptions):
         Constant(10.0), help="Constant temperature if temperature is not solved").tag(config=True)
     constant_salinity = FiredrakeConstantTraitlet(
         Constant(0.0), help="Constant salinity if salinity is not solved").tag(config=True)
+    internal_pg_scalar = FiredrakeConstantTraitlet(
+        None, allow_none=True, help="A constant to scale the internal pressure gradient. Used to ramp up the model.").tag(config=True)
