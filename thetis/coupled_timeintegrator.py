@@ -251,7 +251,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
             solver_parameters=self.options.timestepper_options.solver_parameters_momentum_explicit)
         if self.solver.options.use_implicit_vertical_diffusion:
             fields = {'viscosity_v': impl_v_visc,
-                      'uv_depth_av': self.fields.get('uv_dav_3d'),
+                      # 'uv_depth_av': self.fields.get('uv_dav_3d'),
                       }
             fields.update(friction_fields)
             self.timesteppers.mom_impl = self.integrator_vert_3d(
@@ -719,7 +719,6 @@ class CoupledTwoStageRK(CoupledTimeIntegrator):
 
             if last_stage:
                 # compute final prognostic variables
-                self._update_2d_coupling()  # due before impl. viscosity
                 if self.options.use_implicit_vertical_diffusion:
                     if self.options.solve_salinity:
                         with timed_stage('impl_salt_vdiff'):
@@ -728,8 +727,14 @@ class CoupledTwoStageRK(CoupledTimeIntegrator):
                         with timed_stage('impl_temp_vdiff'):
                             self.timesteppers.temp_impl.advance(t)
                     with timed_stage('impl_mom_vvisc'):
+                        # compute full velocity
+                        self.fields.uv_dav_2d.assign(self.fields.uv_2d)
+                        self.solver.copy_uv_dav_to_uv_dav_3d.solve()  # uv_dav_2d -> uv_dav_3d
+                        self.fields.uv_3d += self.fields.uv_dav_3d
                         self.timesteppers.mom_impl.advance(t)
+                        self.fields.uv_3d -= self.fields.uv_dav_3d
                 # compute final diagnostic fields
+                self._update_2d_coupling()
                 self._update_baroclinicity()
                 self._update_vertical_velocity()
                 # update parametrizations
