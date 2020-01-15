@@ -494,7 +494,7 @@ class BottomFrictionTerm(MomentumTerm):
                 uv = solution
                 uv_old = solution_old
 
-            z_bot = 0.5*self.v_elem_size
+            z_bot = Constant(0.0)*self.v_elem_size
             drag = fields_old.get('quadratic_drag_coefficient')
             if drag is None:
                 z0_friction = physical_constants['z0_friction']
