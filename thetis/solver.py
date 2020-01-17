@@ -787,9 +787,9 @@ class FlowSolver(FrozenClass):
         self.copy_elev_to_3d = ExpandFunctionTo3d(self.fields.elev_2d, self.fields.elev_3d)
         self.copy_elev_cg_to_3d = ExpandFunctionTo3d(self.fields.elev_cg_2d, self.fields.elev_cg_3d)
         self.copy_uv_dav_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_dav_2d, self.fields.uv_dav_3d,
-                                                           elem_height=self.fields.v_elem_size_3d)
+                                                           elem_height=self.fields.v_elem_size_2d)
         self.copy_uv_to_uv_dav_3d = ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_dav_3d,
-                                                       elem_height=self.fields.v_elem_size_3d)
+                                                       elem_height=self.fields.v_elem_size_2d)
         self.uv_mag_solver = VelocityMagnitudeSolver(self.fields.uv_mag_3d, u=self.fields.uv_3d)
         if self.options.use_bottom_friction:
             self.extract_uv_bottom = SubFunctionExtractor(self.fields.uv_p1_3d, self.fields.uv_bottom_2d,
@@ -801,10 +801,10 @@ class FlowSolver(FrozenClass):
             if self.options.use_parabolic_viscosity:
                 self.copy_uv_bottom_to_3d = ExpandFunctionTo3d(self.fields.uv_bottom_2d,
                                                                self.fields.uv_bottom_3d,
-                                                               elem_height=self.fields.v_elem_size_3d)
+                                                               elem_height=self.fields.v_elem_size_2d)
                 self.copy_bottom_drag_to_3d = ExpandFunctionTo3d(self.fields.bottom_drag_2d,
                                                                  self.fields.bottom_drag_3d,
-                                                                 elem_height=self.fields.v_elem_size_3d)
+                                                                 elem_height=self.fields.v_elem_size_2d)
         self.mesh_updater = ALEMeshUpdater(self)
 
         if self.options.use_smagorinsky_viscosity:
@@ -867,7 +867,7 @@ class FlowSolver(FrozenClass):
             self.fields.uv_2d.project(uv_2d)
             if uv_3d is None:
                 ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_3d,
-                                   elem_height=self.fields.v_elem_size_3d).solve()
+                                   elem_height=self.fields.v_elem_size_2d).solve()
         if uv_3d is not None:
             self.fields.uv_3d.project(uv_3d)
         if salt is not None and self.options.solve_salinity:

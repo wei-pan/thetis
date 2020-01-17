@@ -832,6 +832,12 @@ class ExpandFunctionTo3d(object):
         if self.do_hdiv_scaling and elem_height is None:
             raise Exception('elem_height must be provided for HDiv spaces')
 
+        if self.do_hdiv_scaling:
+            # create a 2D function copy that will be scaled by elem height
+            self.source_2d = Function(self.fs_2d)
+        else:
+            self.source_2d = self.input_2d
+
         self.iter_domain = op2.ALL
 
         # number of nodes in vertical direction
@@ -849,7 +855,7 @@ class ExpandFunctionTo3d(object):
                     }
                 }
             }""" % {'nodes': self.fs_2d.finat_element.space_dimension(),
-                    'func2d_dim': self.input_2d.function_space().value_size,
+                    'func2d_dim': self.source_2d.function_space().value_size,
                     'func3d_dim': self.fs_3d.value_size,
                     'v_nodes': n_vert_nodes},
             'my_kernel')
@@ -858,26 +864,27 @@ class ExpandFunctionTo3d(object):
             solver_parameters = {}
             solver_parameters.setdefault('ksp_atol', 1e-12)
             solver_parameters.setdefault('ksp_rtol', 1e-16)
-            test = TestFunction(self.fs_3d)
-            tri = TrialFunction(self.fs_3d)
+            test = TestFunction(self.fs_2d)
+            tri = TrialFunction(self.fs_2d)
             a = inner(tri, test)*dx
-            l = inner(self.output_3d, test)*elem_height*dx
-            prob = LinearVariationalProblem(a, l, self.output_3d)
-            self.rt_scale_solver = LinearVariationalSolver(
+            l = inner(self.input_2d, test)*elem_height*dx
+            prob = LinearVariationalProblem(a, l, self.source_2d)
+            self.hdiv_scale_solver = LinearVariationalSolver(
                 prob, solver_parameters=solver_parameters)
 
     def solve(self):
         with timed_stage('copy_2d_to_3d'):
+            if self.do_hdiv_scaling:
+                with timed_stage('hdiv-scale_2d3d'):
+                    self.hdiv_scale_solver.solve()
+
             # execute par loop
             op2.par_loop(
                 self.kernel, self.fs_3d.mesh().cell_set,
                 self.output_3d.dat(op2.WRITE, self.fs_3d.cell_node_map()),
-                self.input_2d.dat(op2.READ, self.fs_2d.cell_node_map()),
+                self.source_2d.dat(op2.READ, self.fs_2d.cell_node_map()),
                 self.idx(op2.READ),
                 iterate=self.iter_domain)
-
-            if self.do_hdiv_scaling:
-                self.rt_scale_solver.solve()
 
 
 class SubFunctionExtractor(object):
@@ -1027,7 +1034,8 @@ class SubFunctionExtractor(object):
                          iterate=self.iter_domain)
 
             if self.do_hdiv_scaling:
-                self.rt_scale_solver.solve()
+                with timed_stage('hdiv-scale_3d2d'):
+                    self.rt_scale_solver.solve()
 
 
 class SubdomainProjector(object):
