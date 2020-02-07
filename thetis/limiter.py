@@ -114,6 +114,8 @@ class VertexBasedP1DGLimiter(VertexBasedLimiter):
 
         if self.is_2d:
             entity_dim = 1  # get 1D facets
+            # for vertical 2d
+            entity_dim = (1, 0) # TODO separate horizontal 2d and vertical 2d properly
         else:
             entity_dim = (1, 1)  # get vertical facets
         boundary_dofs = entity_support_dofs(self.P1DG.finat_element, entity_dim)

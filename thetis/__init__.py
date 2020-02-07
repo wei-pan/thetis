@@ -27,3 +27,9 @@ parameters['pyop2_options']['lazy_evaluation'] = False
 from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
+
+# Below is for non-hydrostatic (nh) extension that Wei is adding
+import thetis.nh_extension.solver_nh as solver_nh # direct nh extension
+import thetis.nh_extension.solver_sigma as solver_sigma # sigma nh extension
+import thetis.nh_extension.solver_ml as solver_ml  # multi-layer nh extension (2d horizontal mesh)
+import thetis.nh_extension.solver2d_ml as solver2d_ml  # multi-layer nh extension (1d horizontal mesh)

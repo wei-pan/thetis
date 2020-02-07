@@ -11,7 +11,6 @@ from thetis.log import *
 import datetime
 import netCDF4
 from thetis.forcing import *
-from thetis.utility import get_functionspace
 
 # define model coordinate system
 COORDSYS = coordsys.UTM_ZONE10

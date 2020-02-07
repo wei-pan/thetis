@@ -31,6 +31,14 @@ class SemiImplicitTimestepperOptions2d(TimeStepperOptions):
     }).tag(config=True)
     use_semi_implicit_linearization = Bool(
         False, help="Use linearized semi-implicit time integration").tag(config=True)
+    # added by Wei, TODO find a clearer way
+    solver_parameters_momentum = PETScSolverParameters({
+        'snes_type': 'ksponly',
+        'ksp_type': 'preonly',
+        'pc_type': 'bjacobi',
+        'sub_ksp_type': 'preonly',
+        'sub_pc_type': 'ilu',
+    }).tag(config=True)
 
 
 class SteadyStateTimestepperOptions2d(TimeStepperOptions):
@@ -475,6 +483,112 @@ class CommonModelOptions(FrozenConfigurable):
         None, allow_none=True, help="Source term for 2D tracer equation").tag(config=True)
     horizontal_diffusivity = FiredrakeCoefficient(
         None, allow_none=True, help="Horizontal diffusivity for tracers").tag(config=True)
+
+
+    # Below is for non-hydrostatic (nh) extension that Wei is adding 
+    # TODO move to a specific nh Options class
+    use_pressure_correction = Bool(
+        False, help=r"""bool: Use pressure correction method.
+        If ``False``, pressure projection method is used.
+        """).tag(config=True)
+    use_operator_splitting = Bool(
+        True, help=r"""bool: Use operator splitting method.
+        If ``False``, switching to standard ssprk used in FUNWAVE.
+        """).tag(config=True)
+    solve_elevation_gradient_separately = Bool(
+        True, help=r"""bool: Solve elevation gradient term separately.
+        If ``False``, solving 3D equations with elevation gradient term included directly like NHWAVE does.
+        """).tag(config=True)
+    update_free_surface = Bool(
+        not True, help=r"""bool: Solve free surface equation and update 2D elevation.
+        If ``False``, not solving free surface equation, e.g. rigid free surface in lock exchange case.
+        """).tag(config=True)
+    use_wetting_and_drying = Bool(
+        False, help=r"""bool: Turn on wetting and drying
+
+        Uses the wetting and drying scheme from Karna et al (2011).
+        If ``True``, one should also set :attr:`wetting_and_drying_alpha` to control the bathymetry displacement.
+        """).tag(config=True)
+    wetting_and_drying_alpha = FiredrakeConstantTraitlet(
+        Constant(0.5), help=r"""
+        Coefficient: Wetting and drying parameter :math:`\alpha`.
+
+        Used in bathymetry displacement function that ensures positive water depths. Unit is meters.
+        """).tag(config=True)
+    constant_mindep = Bool(
+        True, help=r"""
+        If False, alpha is varied, based on wd_mindep; if True, alpha equals to wd_mindep
+        """).tag(config=True)
+    thin_film = Bool(
+        False, help=r"""
+        If True, thin-film wetting-drying scheme is used
+        """).tag(config=True)
+    depth_wd_interface = FiredrakeConstantTraitlet(
+        Constant(1E-8), help=r"""
+        Coefficient or None: Intermediate wetting-drying parameter :math:`\alpha`
+
+        Used to ensure artificial positive water depths. Unit is meters.
+        Default is None, controlled by wd_mindep; facilitate users' understanding and prescription
+        """).tag(config=True)
+    wd_mindep = NonNegativeFloat(0.01, help="Min depth parameter of the wetting-drying scheme.").tag(config=True)
+    n_layers = NonNegativeInteger(1, help="Number of vertical layers.").tag(config=True)
+    alpha_nh = List(
+        default_value=[], help=r"""
+        Coefficient: Multi-layer parameter :math:`\alpha_nh`.
+
+        Used in non-hydrostatic solver to control the thickness of layer.
+        """).tag(config=True)
+    beta_nh = FiredrakeConstantTraitlet(
+        Constant(1.), help=r"""
+        Coefficient: Multi-layer approximation parameter :math:`\beta_nh`.
+
+        Used in non-hydrostatic solver to control the non-hydrostatic pressure at bottom.
+        """).tag(config=True)
+    set_vertical_2d = Bool(
+        False, help=r"""bool: Turn on 1D horizontal, i.e. 2D including vertical dimension
+
+        If ``True``, the y-direction velocity of uv_2d is set as zero.
+        """).tag(config=True)
+    sponge_layer_length = List(
+        default_value=[0., 0.], help=r"""
+        Length of sponge layer; if not None, sponge layer adopted to absorb relected wave, in which:
+
+        2D linear damping parameter in the set-up sponge layer technique :math:`D`
+        Bottom stress is :math:`\tau_b/\rho_0 = -D \mathbf{u} H`
+        """).tag(config=True)
+    sponge_layer_xstart = List(
+        default_value=[0., 0.], help=r"""
+        Position of start point of sponge layer's X-direction. Unit is meters.
+        """).tag(config=True)
+    landslide = Bool(False, help=r"""bool: if True, landslide motion solved""").tag(config=True)
+    slide_is_rigid = Bool(True, help=r"""bool: if True, slide is rigid, not deformable slide""").tag(config=True)
+    slide_is_granular = Bool(True, help=r"""bool: if True, granular slide flow, else: laminar fluid""").tag(config=True)
+    rho_water = NonNegativeFloat(1000., help="Density of water. Unit is kg m-3").tag(config=True)
+    rho_slide = NonNegativeFloat(2650., help="Density of slide. Unit is kg m-3").tag(config=True)
+    slide_viscosity = NonNegativeFloat(0.01, help="Horizontal viscosity for landslide motion equations").tag(config=True)
+    t_landslide = PositiveFloat(1000., help="Slide motion only for a limited time in seconds").tag(config=True)
+
+    rho_1 = NonNegativeFloat(1., help="Density of lighter phase fluid. Unit is kg m-3").tag(config=True)
+    rho_2 = NonNegativeFloat(1000., help="Density of heavier phase fluid. Unit is kg m-3").tag(config=True)
+    nu_1 = NonNegativeFloat(1.E-6, help="Viscosity of lighter phase fluid. Unit is m2 s-1").tag(config=True)
+    nu_2 = NonNegativeFloat(1.E-3, help="Viscosity of heavier phase fluid. Unit is m2 s-1").tag(config=True)
+
+    # for sediment transport
+    solve_sediment = Bool(False, help='Solve sediment transport').tag(config=True)
+    settling_velocity = FiredrakeConstantTraitlet(
+        Constant(0.), help=r"""
+        Settling velocity used in a sediment model to control fall velocity of sediments.
+        """).tag(config=True)
+    sigma_h = FiredrakeConstantTraitlet(
+        Constant(1.), help=r"""
+        Horizontal Schmidt numbers for sediment, taken as 0.5 ~ 1.0.
+        """).tag(config=True)
+    sigma_v = FiredrakeConstantTraitlet(
+        Constant(1.), help=r"""
+        Vertical Schmidt numbers for sediment, taken as 0.5 ~ 1.0.
+        """).tag(config=True)
+    sediment_source_3d = FiredrakeScalarExpression(
+        None, allow_none=True, help="Source term for sediment equation").tag(config=True)
 
 
 # NOTE all parameters are now case sensitive
