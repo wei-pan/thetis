@@ -1015,11 +1015,11 @@ class SubFunctionExtractor(object):
             self.iter_domain = op2.ON_BOTTOM
 
         out_nodes = self.fs_2d.finat_element.space_dimension()
-
-        if elem_facet == 'average':
-            assert (len(nodes) == 2*out_nodes)
-        else:
-            assert (len(nodes) == out_nodes)
+        print('out_nodes is ', out_nodes, '; length of nodes is ', len(nodes), '; len(nodes) == out_nodes is ', len(nodes) == out_nodes)
+       # if elem_facet == 'average':
+       #     assert (len(nodes) == 2*out_nodes)
+       # else:
+       #     assert (len(nodes) == out_nodes)
 
         self.idx = op2.Global(len(nodes), nodes, dtype=np.int32, name='node_idx')
         if elem_facet == 'average':
