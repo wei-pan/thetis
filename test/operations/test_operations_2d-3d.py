@@ -11,7 +11,7 @@ def mesh2d():
 
 @pytest.fixture(scope="module")
 def mesh(mesh2d):
-    fs = utility.get_functionspace(mesh2d, 'CG', 1)
+    fs = FunctionSpace(mesh2d, 'CG', 1)
     bathymetry_2d = Function(fs).assign(1.0)
     n_layers = 10
     return utility.extrude_mesh_sigma(mesh2d, n_layers, bathymetry_2d)
@@ -32,26 +32,27 @@ def spaces(request):
 @pytest.fixture
 def p1_2d(mesh2d, spaces):
     (name, order), (vname, vorder) = spaces
-    return utility.get_functionspace(mesh2d, name, order)
+    return FunctionSpace(mesh2d, name, order)
 
 
 @pytest.fixture
 def p1(mesh, spaces):
     (name, order), (vname, vorder) = spaces
-    return utility.get_functionspace(mesh, name, order, vname, vorder)
+    return FunctionSpace(mesh, name, order,
+                         vfamily=vname, vdegree=vorder)
 
 
 @pytest.fixture
 def u_2d(mesh2d, spaces):
     (name, order), (vname, vorder) = spaces
-    return utility.get_functionspace(mesh2d, name, order, vector=True)
+    return VectorFunctionSpace(mesh2d, name, order)
 
 
 @pytest.fixture
 def u(mesh, spaces):
     (name, order), (vname, vorder) = spaces
-    return utility.get_functionspace(mesh, name, order, vname, vorder,
-                                        vector=True)
+    return VectorFunctionSpace(mesh, name, order,
+                               vfamily=vname, vdegree=vorder)
 
 
 @pytest.fixture

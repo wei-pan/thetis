@@ -500,7 +500,7 @@ class CommonModelOptions(FrozenConfigurable):
         If ``False``, solving 3D equations with elevation gradient term included directly like NHWAVE does.
         """).tag(config=True)
     update_free_surface = Bool(
-        not True, help=r"""bool: Solve free surface equation and update 2D elevation.
+        True, help=r"""bool: Solve free surface equation and update 2D elevation.
         If ``False``, not solving free surface equation, e.g. rigid free surface in lock exchange case.
         """).tag(config=True)
     use_wetting_and_drying = Bool(
