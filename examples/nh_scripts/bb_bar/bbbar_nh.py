@@ -61,6 +61,7 @@ options.polynomial_degree = 1
 options.timestepper_type = 'SSPRK22'#'LeapFrog'#'SSPRK22'
 options.use_nonlinear_equations = True
 options.update_free_surface = True
+options.use_operator_splitting = True
 # for three-layer NH model, suggest to set alpha as 0.1, beta 0.45
 # for coupled two-layer NH model, suggest to set alpha as 0.2
 # for reduced model, alpha and beta depend on specific cases,
@@ -70,6 +71,8 @@ options.update_free_surface = True
 options.alpha_nh = [] # [] means uniform layers
 options.solve_salinity = False
 options.solve_temperature = False
+options.use_limiter_for_velocity = False
+options.use_limiter_for_tracers = False
 options.use_implicit_vertical_diffusion = False
 options.use_bottom_friction = False
 options.use_ale_moving_mesh = True

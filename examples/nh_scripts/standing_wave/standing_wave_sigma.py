@@ -54,6 +54,7 @@ options.alpha_nh = [] # [] means uniform layers
 options.solve_salinity = False
 options.solve_temperature = False
 options.use_limiter_for_velocity = False
+options.use_limiter_for_tracers = False
 options.use_implicit_vertical_diffusion = False
 options.use_bottom_friction = False
 options.use_ale_moving_mesh = not True

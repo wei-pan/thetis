@@ -73,6 +73,8 @@ class VertexBasedP1DGLimiter(VertexBasedLimiter):
         self.mesh = self.P0.mesh()
         self.is_2d = self.mesh.geometric_dimension() == 2
         self.time_dependent_mesh = time_dependent_mesh
+        # for vertical 2d in non-hydrostatic (nh) extension, WPan 2020-02-11
+        self.mesh_is_extruded = (p1dg_space.mesh().ufl_cell() not in (ufl.Cell('triangle'), ufl.Cell('interval')))
 
     def _construct_centroid_solver(self):
         """
@@ -114,8 +116,9 @@ class VertexBasedP1DGLimiter(VertexBasedLimiter):
 
         if self.is_2d:
             entity_dim = 1  # get 1D facets
-            # for vertical 2d in non-hydrostatic (nh) extension
-            entity_dim = (1, 0) # TODO separate horizontal 2d and vertical 2d properly
+            # for vertical 2d in non-hydrostatic (nh) extension, WPan 2020-02-11
+            if self.mesh_is_extruded:
+                entity_dim = (1, 0) # TODO separate horizontal 2d and vertical 2d properly
         else:
             entity_dim = (1, 1)  # get vertical facets
         boundary_dofs = entity_support_dofs(self.P1DG.finat_element, entity_dim)
@@ -145,7 +148,7 @@ class VertexBasedP1DGLimiter(VertexBasedLimiter):
                      field.dat(op2.READ, field.exterior_facet_node_map()),
                      self.P1DG.mesh().exterior_facets.local_facet_dat(op2.READ),
                      local_facet_idx(op2.READ))
-        if not self.is_2d:
+        if not self.is_2d or self.mesh_is_extruded: # add 'or self.mesh_is_extruded' for vertical 2d, TODO verify, WPan 2020-02-11
             # Add nodal values from surface/bottom boundaries
             # NOTE calling firedrake par_loop with measure=ds_t raises an error
             bottom_nodes = get_facet_mask(self.P1CG, 'geometric', 'bottom')

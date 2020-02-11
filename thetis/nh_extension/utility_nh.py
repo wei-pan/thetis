@@ -345,7 +345,7 @@ def get_zcoord_from_mesh(zcoord, solver_parameters={}):
         vert_ind = 1
     else:
         vert_ind = 2
-   # l = fs.mesh().coordinates[2]*test*dx
+   # l = fs.mesh().coordinates[vert_ind]*test*dx
    # solve(a == l, zcoord, solver_parameters=solver_parameters)
     zcoord.interpolate(fs.mesh().coordinates[vert_ind]) # for mpi running properly, WPan
     return zcoord

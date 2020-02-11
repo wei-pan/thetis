@@ -55,6 +55,7 @@ options.solve_elevation_gradient_separately = True # False i.e. including grad(e
 options.solve_salinity = False
 options.solve_temperature = False
 options.use_limiter_for_velocity = False
+options.use_limiter_for_tracers = False
 options.use_implicit_vertical_diffusion = False
 options.use_bottom_friction = False
 options.use_ale_moving_mesh = True
