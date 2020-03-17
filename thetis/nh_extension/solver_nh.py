@@ -1390,7 +1390,7 @@ class FlowSolver(FrozenClass):
         """
         if length == [0., 0.]:
             return None
-        if sponge_is_2d is True:
+        if sponge_is_2d:
             damping_coeff = Function(self.function_spaces.P1_2d)
         else:
             damping_coeff = Function(self.function_spaces.P1)
@@ -3594,17 +3594,19 @@ class FlowSolver(FrozenClass):
                 self.print_state(cputime)
 
                 # exporter with wetting-drying handle
-                self.solution_2d_tmp.assign(self.fields.solution_2d)
-                self.solution_ls_tmp.assign(self.fields.solution_ls)
-                H = self.bathymetry_dg.dat.data + elev_2d.dat.data
-                h_ls = self.bathymetry_ls.dat.data + elev_ls.dat.data
-                ind = np.where(H[:] <= 0.)[0]
-                ind_ls = np.where(h_ls[:] <= 0.)[0]
-                elev_2d.dat.data[ind] = 1E-6 - self.bathymetry_dg.dat.data[ind]
-                elev_ls.dat.data[ind_ls] = 1E-6 - self.bathymetry_ls.dat.data[ind_ls]
+                if self.options.use_wetting_and_drying:
+                    self.solution_2d_tmp.assign(self.fields.solution_2d)
+                    self.solution_ls_tmp.assign(self.fields.solution_ls)
+                    H = self.bathymetry_dg.dat.data + elev_2d.dat.data
+                    h_ls = self.bathymetry_ls.dat.data + elev_ls.dat.data
+                    ind = np.where(H[:] <= 0.)[0]
+                    ind_ls = np.where(h_ls[:] <= 0.)[0]
+                    elev_2d.dat.data[ind] = 1E-6 - self.bathymetry_dg.dat.data[ind]
+                    elev_ls.dat.data[ind_ls] = 1E-6 - self.bathymetry_ls.dat.data[ind_ls]
                 self.export()
-                self.fields.solution_2d.assign(self.solution_2d_tmp)
-                self.fields.solution_ls.assign(self.solution_ls_tmp)
+                if self.options.use_wetting_and_drying:
+                    self.fields.solution_2d.assign(self.solution_2d_tmp)
+                    self.fields.solution_ls.assign(self.solution_ls_tmp)
 
                 if export_func is not None:
                     export_func()

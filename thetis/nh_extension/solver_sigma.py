@@ -625,11 +625,11 @@ class FlowSolver(FrozenClass):
         self.tot_v_diff.add(self.options.vertical_diffusivity)
         self.tot_v_diff.add(self.fields.get('eddy_diff_3d'))
 
-        self.create_functions() # WPan added.
+        self.create_functions(coord_fs=coord_fs) # WPan added.
 
         self._isfrozen = True
 
-    def create_functions(self):
+    def create_functions(self, coord_fs=None):
         """
         Creates extra functions, including fields
         """
@@ -715,7 +715,6 @@ class FlowSolver(FrozenClass):
         self.function_spaces.q_mixed_n_layers = MixedFunctionSpace(list_fs)
         self.q_mixed_n_layers = Function(self.function_spaces.q_mixed_n_layers)
 
-        coord_fs = FunctionSpace(self.mesh, 'DG', 1, vfamily='CG', vdegree=1)
         if self.horizontal_domain_is_2d:
             self.sigma_coord = Function(coord_fs).project(self.mesh.coordinates[2])
         else:
@@ -1351,7 +1350,7 @@ class FlowSolver(FrozenClass):
         """
         if length == [0., 0.]:
             return None
-        if sponge_is_2d is True:
+        if sponge_is_2d:
             damping_coeff = Function(self.function_spaces.P1_2d)
         else:
             damping_coeff = Function(self.function_spaces.P1)
@@ -2124,17 +2123,32 @@ class FlowSolver(FrozenClass):
                 self.print_state(cputime)
 
                 # exporter with wetting-drying handle
-                self.solution_2d_tmp.assign(self.fields.solution_2d)
-                self.solution_ls_tmp.assign(self.fields.solution_ls)
-                H = self.bathymetry_dg.dat.data + elev_2d.dat.data
-                h_ls = self.bathymetry_ls.dat.data + elev_ls.dat.data
-                ind = np.where(H[:] <= 0.)[0]
-                ind_ls = np.where(h_ls[:] <= 0.)[0]
-                elev_2d.dat.data[ind] = 1E-6 - self.bathymetry_dg.dat.data[ind]
-                elev_ls.dat.data[ind_ls] = 1E-6 - self.bathymetry_ls.dat.data[ind_ls]
+                if self.options.use_wetting_and_drying:
+                    self.solution_2d_tmp.assign(self.fields.solution_2d)
+                    self.solution_ls_tmp.assign(self.fields.solution_ls)
+                    H = self.bathymetry_dg.dat.data + elev_2d.dat.data
+                    h_ls = self.bathymetry_ls.dat.data + elev_ls.dat.data
+                    ind = np.where(H[:] <= 0.)[0]
+                    ind_ls = np.where(h_ls[:] <= 0.)[0]
+                    elev_2d.dat.data[ind] = 1E-6 - self.bathymetry_dg.dat.data[ind]
+                    elev_ls.dat.data[ind_ls] = 1E-6 - self.bathymetry_ls.dat.data[ind_ls]
+                # temporarily back to z-coordinate
+                self.fields.elev_cg_3d.project(self.fields.elev_3d)
+                eta_cg = self.fields.elev_cg_3d.dat.data[:]
+                bath_cg = self.fields.bathymetry_3d.dat.data[:]
+                new_z = self.sigma_coord.dat.data[:]*(eta_cg + bath_cg) - bath_cg
+                if self.horizontal_domain_is_2d:
+                    self.mesh.coordinates.dat.data[:, 2] = new_z
+                else:
+                    self.mesh.coordinates.dat.data[:, 1] = new_z
                 self.export()
-                self.fields.solution_2d.assign(self.solution_2d_tmp)
-                self.fields.solution_ls.assign(self.solution_ls_tmp)
+                if self.horizontal_domain_is_2d:
+                    self.mesh.coordinates.dat.data[:, 2] = self.sigma_coord.dat.data[:]
+                else:
+                    self.mesh.coordinates.dat.data[:, 1] = self.sigma_coord.dat.data[:]
+                if self.options.use_wetting_and_drying:
+                    self.fields.solution_2d.assign(self.solution_2d_tmp)
+                    self.fields.solution_ls.assign(self.solution_ls_tmp)
 
                 if export_func is not None:
                     export_func()
