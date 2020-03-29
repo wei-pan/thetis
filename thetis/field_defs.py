@@ -426,4 +426,21 @@ field_metadata['c_3d'] = {
     'unit': '-',
     'filename': 'Concentration3d',
 }
-
+field_metadata['h_2d'] = {
+    'name': 'Water depth in non-conservative form',
+    'shortname': 'Water depth',
+    'unit': 'm',
+    'filename': 'WaterHeight',
+}
+field_metadata['hu_2d'] = {
+    'name': 'Momentum hu in non-conservative form',
+    'shortname': 'Momentum hu',
+    'unit': 'm2 s-1',
+    'filename': 'MomentumHu',
+}
+field_metadata['hv_2d'] = {
+    'name': 'Momentum hv in non-conservative form',
+    'shortname': 'Momentum hv',
+    'unit': 'm2 s-1',
+    'filename': 'MomentumHv',
+}

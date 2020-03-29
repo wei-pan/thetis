@@ -18,7 +18,7 @@ from ..options import ModelOptions2d
 from .. import callback
 from ..log import *
 from collections import OrderedDict
-import thetis.limiter as limiter
+from . import limiter_nh as limiter
 
 
 class FlowSolver(FrozenClass):
@@ -45,7 +45,7 @@ class FlowSolver(FrozenClass):
 
     .. code-block:: python
 
-        solver_obj = solver2d.FlowSolver2d(mesh2d, bathymetry_2d)
+        solver_obj = solver_ml.FlowSolver(mesh2d, bathymetry_2d)
         options = solver_obj.options
         options.element_family = 'dg-dg'
         options.polynomial_degree = 1
@@ -647,15 +647,16 @@ class FlowSolver(FrozenClass):
         An alternative to try alpha, finding minimum alpha to let all depths below the threshold wd_mindep.
 
         :arg H0: Minimum water depth
-        """     
+        """
+        wd_mindep = self.options.wetting_and_drying_threshold     
         if H0 > 1.0E-5:
             return 0.
         elif not self.options.constant_mindep:
-            return np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep # new formulated function, WPan
+            return np.sqrt(0.25 * wd_mindep**2 - 0.5 * wd_mindep * H0) + 0.5 * wd_mindep # new formulated function, WPan
             #return np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep # artificial porosity method
             #return np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0)) # original bathymetry changed method
         else:
-            return self.options.wd_mindep
+            return wd_mindep
 
     def iterate(self, update_forcings=None,
                 export_func=None):

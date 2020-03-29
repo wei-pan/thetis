@@ -1,5 +1,5 @@
 """
-Module for vertical two dimensional solver in sigma mesh
+Module for barotropic/baroclinic non-hydrostatic solver in sigma mesh
 """
 from __future__ import absolute_import
 from . import shallowwater_nh
@@ -11,7 +11,7 @@ from .utility_nh import *
 from .. import turbulence
 from .. import timeintegrator
 from .. import rungekutta
-import thetis.limiter as limiter
+from . import limiter_nh as limiter
 import time as time_mod
 from mpi4py import MPI
 from .. import exporter
@@ -50,7 +50,7 @@ class FlowSolver(FrozenClass):
 
     .. code-block:: python
 
-        solver_obj = solver.FlowSolver(mesh2d, bathymetry_2d, n_layers=6)
+        solver_obj = solver_sigma.FlowSolver(mesh2d, bathymetry_2d, n_layers=6)
         options = solver_obj.options
         options.element_family = 'dg-dg'
         options.polynomial_degree = 1
@@ -1405,14 +1405,15 @@ class FlowSolver(FrozenClass):
 
         :arg H0: Minimum water depth
         """     
+        wd_mindep = self.options.wetting_and_drying_threshold     
         if H0 > 1.0E-5:
             return 0.
         elif not self.options.constant_mindep:
-            return np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep # new formulated function, WPan
+            return np.sqrt(0.25 * wd_mindep**2 - 0.5 * wd_mindep * H0) + 0.5 * wd_mindep # new formulated function, WPan
             #return np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep # artificial porosity method
             #return np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0)) # original bathymetry changed method
         else:
-            return self.options.wd_mindep
+            return wd_mindep
 
     def slide_shape(self, simulation_time):
         """

@@ -528,9 +528,11 @@ class CommonModelOptions(FrozenConfigurable):
         Coefficient or None: Intermediate wetting-drying parameter :math:`\alpha`
 
         Used to ensure artificial positive water depths. Unit is meters.
-        Default is None, controlled by wd_mindep; facilitate users' understanding and prescription
+        Default is None, controlled by wd_mindep; facilitate prescription
         """).tag(config=True)
-    wd_mindep = NonNegativeFloat(0.01, help="Min depth parameter of the wetting-drying scheme.").tag(config=True)
+    wetting_and_drying_threshold = NonNegativeFloat(1e-4, help="Wetting and drying threshold.").tag(config=True)
+    use_wd_limiter = Bool(True, help=r"""bool: if True, a limiter is used for wetting and drying.""").tag(config=True)
+
     n_layers = NonNegativeInteger(1, help="Number of vertical layers.").tag(config=True)
     alpha_nh = List(
         default_value=[], help=r"""
@@ -590,6 +592,8 @@ class CommonModelOptions(FrozenConfigurable):
     sediment_source_3d = FiredrakeScalarExpression(
         None, allow_none=True, help="Source term for sediment equation").tag(config=True)
 
+    # for solver in conservative form
+    use_hllc_flux = Bool(True, help=r"""bool: if True, solver in conservative form uses hllc flux, else: roe average flux.""").tag(config=True)
 
 # NOTE all parameters are now case sensitive
 # TODO rename time stepper types? Allow capitals and spaces?

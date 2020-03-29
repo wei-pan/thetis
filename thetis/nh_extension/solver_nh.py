@@ -1,5 +1,5 @@
 """
-Module for three dimensional baroclinic solver
+Module for 3D barotropic/baroclinic non-hydrostatic solver
 """
 from __future__ import absolute_import
 from . import shallowwater_nh
@@ -12,7 +12,7 @@ from . import turbulence_nh
 from .utility_nh import *
 from .. import timeintegrator
 from .. import rungekutta
-import thetis.limiter as limiter
+from . import limiter_nh as limiter
 import time as time_mod
 from mpi4py import MPI
 from .. import exporter
@@ -51,7 +51,7 @@ class FlowSolver(FrozenClass):
 
     .. code-block:: python
 
-        solver_obj = solver.FlowSolver(mesh2d, bathymetry_2d, n_layers=6)
+        solver_obj = solver_nh.FlowSolver(mesh2d, bathymetry_2d, n_layers=6)
         options = solver_obj.options
         options.element_family = 'dg-dg'
         options.polynomial_degree = 1
@@ -1406,7 +1406,7 @@ class FlowSolver(FrozenClass):
             #if length[0] < 0:
                 #print('Start point of the first sponge layer is out of computational domain!')
                 #raise ValueError('Start point of the first sponge layer is out of computational domain!')
-        if mesh.coordinates.sub(0).dat.data.max() <= x_start[1] + length[1]:
+        if mesh.coordinates.sub(1).dat.data.max() <= x_start[1] + length[1]:
             length[1] = xvector.max() - x_start[1]
             #if length[1] < 0:
                 #print('Start point of the second sponge layer is out of computational domain!')
@@ -1460,14 +1460,15 @@ class FlowSolver(FrozenClass):
 
         :arg H0: Minimum water depth
         """     
+        wd_mindep = self.options.wetting_and_drying_threshold     
         if H0 > 1.0E-5:
             return 0.
         elif not self.options.constant_mindep:
-            return np.sqrt(0.25*self.options.wd_mindep**2 - 0.5*self.options.wd_mindep*H0) + 0.5*self.options.wd_mindep # new formulated function, WPan
+            return np.sqrt(0.25 * wd_mindep**2 - 0.5 * wd_mindep * H0) + 0.5 * wd_mindep # new formulated function, WPan
             #return np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep # artificial porosity method
             #return np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0)) # original bathymetry changed method
         else:
-            return self.options.wd_mindep
+            return wd_mindep
 
     def slide_shape(self, simulation_time):
         """
@@ -1686,7 +1687,7 @@ class FlowSolver(FrozenClass):
             new_vert_v_cell[1][0] = 0;
             new_vert_v_cell[2][0] = 0;
         }
-        """ % {"epsilon": self.options.wd_mindep}
+        """ % {"epsilon": self.options.wetting_and_drying_threshold}
 
         args = {
                 "new_vert_v_cell": (func_v_tmp, RW),
@@ -1844,11 +1845,11 @@ class FlowSolver(FrozenClass):
                 tmp_proj_func.project(uv_2d)
                 visu_space.restore_work_function(tmp_proj_func)
                 UV = tmp_proj_func.dat.data
-                ind = np.where(H[:] <= self.options.wd_mindep)[0]
-                H[ind] = self.options.wd_mindep
+                ind = np.where(H[:] <= self.options.wetting_and_drying_threshold)[0]
+                H[ind] = self.options.wetting_and_drying_threshold
                 elev_2d.dat.data[ind] = (H - self.bathymetry_dg.dat.data)[ind] # note not appllies to landslide
                 #UV[ind] = [0., 0.]
-                #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wd_mindep, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
+                #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wetting_and_drying_threshold, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
                 #if self.options.element_family == 'rt-dg':
                 #    uv_2d.project(tmp_proj_func) 
                 #else:

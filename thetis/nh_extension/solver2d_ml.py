@@ -18,7 +18,7 @@ from ..options import ModelOptions2d
 from .. import callback
 from ..log import *
 from collections import OrderedDict
-import thetis.limiter as limiter
+from . import limiter_nh as limiter
 
 
 class FlowSolver(FrozenClass):
@@ -45,7 +45,7 @@ class FlowSolver(FrozenClass):
 
     .. code-block:: python
 
-        solver_obj = solver2d.FlowSolver1d(mesh1d, bathymetry_2d)
+        solver_obj = solver2d_ml.FlowSolver(mesh1d, bathymetry_2d)
         options = solver_obj.options
         options.element_family = 'dg-dg'
         options.polynomial_degree = 1
