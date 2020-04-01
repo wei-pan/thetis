@@ -61,6 +61,9 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         self.dS = dS(degree=self.quad_degree,
                      domain=self.function_space.ufl_domain())
 
+        self.grav_x = g_grav*sin(self.options.bed_slope)
+        self.grav_z = g_grav*cos(self.options.bed_slope)
+
     def wd_depth_displacement(self, h):
         """
         Returns depth change due to wetting and drying
@@ -97,14 +100,36 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         vel_uv = as_vector((vel(hu, h), vel(hv, h)))
         vel_uv_old = as_vector((vel(hu_old, h_old), vel(hv_old, h_old)))
 
+        if self.options.flow_is_granular:
+            lamda = self.options.lamda
+            phi_i = fields_old.get('phi_i')#self.options.phi_i
+            phi_b = fields_old.get('phi_b')#self.options.phi_b
+            kap = fields_old.get('kap')
+            uv_div = fields_old.get('uv_div')
+           # uv_div = div(vel_uv)
+            s_xy = fields_old.get('strain_rate')
+            s_xy = 0.5*(Dx(vel_uv[0], 1) + Dx(vel_uv[1], 0))
+            if self.options.phi_i <= self.options.phi_b:
+                kap = (1 + sin(phi_i)**2) / (1 - sin(phi_i)**2)
+            else:
+                kap_div = 2*(1 - sqrt(1 - cos(phi_i)**2*(1 + tan(phi_b)**2)))/(cos(phi_i)**2) - 1
+                kap_conv = 2*(1 + sqrt(1 - cos(phi_i)**2*(1 + tan(phi_b)**2)))/(cos(phi_i)**2) - 1
+                kap = conditional(uv_div > 1e-6, kap_div, conditional(uv_div < -1e-6, kap_conv, Constant(1.)))
+            if self.options.kap is not None:
+                kap = self.options.kap
+            self.lam_kap = (1 - lamda)*kap + lamda
+        else:
+            kap = 1.
+            self.lam_kap = 1.
+
         # construct forms
         include_hu_div = True
         include_ext_pressure_grad = True
         include_hori_advection = True
         if self.options.use_hllc_flux:
             # horizontal advection and external pressure gradient terms
-            F1 = as_vector((hu_old, hu_old * vel_uv[0] + (g_grav / 2) * (h_old * h_old), hv_old * vel_uv[0]))
-            F2 = as_vector((hv_old, hu_old * vel_uv[1], hv_old * vel_uv[1] + (g_grav / 2) * (h_old * h_old)))
+            F1 = as_vector((hu_old, hu_old*vel_uv[0] + 0.5*self.lam_kap*self.grav_z*h_old**2, hv_old * vel_uv[0]))
+            F2 = as_vector((hv_old, hu_old*vel_uv[1], hv_old*vel_uv[1] + 0.5*self.lam_kap*self.grav_z*h_old**2))
             f += -(dot(Dx(self.test, 0), F1) + dot(Dx(self.test, 1), F2))*self.dx
             # set up modified vectors and evaluate fluxes
             w_plus = as_vector((h_old, mom_uv[0], mom_uv[1]))('+')
@@ -119,19 +144,33 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
                     mom_av = dot(avg(mom_uv_old), self.normal('-'))
                     gamma = 0.5*abs(mom_av)*uv_lax_friedrichs
                     f += gamma*dot(jump(self.test_uv), jump(vel_uv))*self.dS
+            if self.options.flow_is_granular:
+                p_x = 0. # TODO input upper surface fluid pressure in fields
+                p_y = 0. 
+                uv_mag = sqrt(vel_uv[0]**2 + vel_uv[1]**2)
+                src_x = (self.grav_x*h_old + h_old/self.options.rho_slide*p_x 
+                         - (1. - lamda)*self.grav_z*h_old*tan(phi_b)*vel_uv[0]/(uv_mag + 1e-16)
+                         - sign(s_xy)*(1. - lamda)*self.grav_z*h_old*kap*Dx(h_old, 1)*sin(phi_i)
+                            )
+                grav_y = 0
+                src_y = (grav_y*h_old + h_old/self.options.rho_slide*p_y 
+                         - (1. - lamda)*self.grav_z*h_old*tan(phi_b)*vel_uv[1]/(uv_mag + 1e-16)
+                         - sign(s_xy)*(1. - lamda)*self.grav_z*h_old*kap*Dx(h_old, 0)*sin(phi_i)
+                            )
+                f += -(src_x*self.test_uv[0] + src_y*self.test_uv[1])*self.dx
         else:
             h_mod = h_old + self.wd_depth_displacement(h_old)
             # HUDivTerm
             if include_hu_div:
                 f += -dot(grad(self.test_h), mom_uv)*self.dx # mom_vec?
                 h_avg = avg(h_old)
-                uv_rie = avg(vel_uv) + sqrt(g_grav/h_avg)*jump(h, self.normal)
+                uv_rie = avg(vel_uv) + sqrt(self.grav_z/h_avg)*jump(h, self.normal)
                 f += inner(jump(self.test_h, self.normal), h_avg*uv_rie)*self.dS
             # ExternalPressureGradientTerm
             if include_ext_pressure_grad:
-                f += -0.5*g_grav*h*h*div(self.test_uv)*self.dx
-                h_star = avg(h) + sqrt(avg(h_old)/g_grav)*jump(vel_uv, self.normal)
-                f += 0.5*g_grav*h_star*h_star*jump(self.test_uv, self.normal)*self.dS
+                f += -0.5*self.grav_z*h*h*div(self.test_uv)*self.dx
+                h_star = avg(h) + sqrt(avg(h_old)/self.grav_z)*jump(vel_uv, self.normal)
+                f += 0.5*self.grav_z*h_star*h_star*jump(self.test_uv, self.normal)*self.dS
             # HorizontalAdvectionTerm
             if include_hori_advection:
                 f += -(mom_uv_old[0]*vel_uv[0]*Dx(self.test_uv[0], 0)
@@ -160,25 +199,20 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
                 f += dot(flux_bnd, self.test)*ds_bnd
             else:
                 if funcs is not None: # TODO enrich
-                    if funcs['elev'] is not None:
+                    if 'elev' in funcs:
                         h_ext = self.bathymetry + funcs['elev']
                         h_ext_old = h_ext
                         h_mod_ext = h_ext + self.wd_depth_displacement(h_ext)
-                    else:
+                    else: # 'inflow' or 'outflow'
                         h_ext = h
                         h_ext_old = h_old
                         h_mod_ext = h_ext + self.wd_depth_displacement(h_ext)
-                    if funcs['uv'] is not None:
+                    if 'uv' in funcs:
                         uv_ext = funcs['uv'] # or funcs['flux']/h_ext
                         uv_ext_old = funcs['uv']
-                    else:
+                    else: # 'inflow' or 'outflow'
                         uv_ext = mom_uv/h_ext
                         uv_ext_old = mom_uv_old/h_ext
-                else:
-                    h_ext = h
-                    h_ext_old = h_old
-                    uv_ext = mom_uv/h_ext
-                    uv_ext_old = mom_uv_old/h_ext
                 # HUDivTerm
                 if include_hu_div:
                     if funcs is not None:
@@ -187,45 +221,42 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
                         h_jump = h - h_ext
                         # u_star = 0.5 * (vl + vr) + sqrt(g * hl) - sqrt(g * hr)
                         # h_star = (0.5 * (sqrt(g * hl) + sqrt(g * hr)) + 0.25 * (vl - vr))**2/g
-                        un_rie = 0.5*dot(vel_uv + uv_ext, self.normal) + sqrt(g_grav/h_av)*h_jump
+                        un_rie = 0.5*dot(vel_uv + uv_ext, self.normal) + sqrt(self.grav_z/h_av)*h_jump
                         un_jump = dot(vel_uv_old - uv_ext_old, self.normal)
-                        h_rie = 0.5*(h_old + h_ext_old) + sqrt(h_av/g_grav)*un_jump
+                        h_rie = 0.5*(h_old + h_ext_old) + sqrt(h_av/self.grav_z)*un_jump
                         f += h_rie*un_rie*self.test_h*ds_bnd
                 # ExternalPressureGradientTerm
                 if include_ext_pressure_grad:
                     if funcs is not None:
                         # Compute linear riemann solution with h_old, h_ext, vel_uv, uv_ext
                         un_jump = dot(vel_uv - uv_ext, self.normal)
-                        h_rie = 0.5*(h + h_ext) + sqrt(h_old/g_grav)*un_jump
-                        f += 0.5*g_grav*h_rie*h_rie*dot(self.test_uv, self.normal)*ds_bnd
+                        h_rie = 0.5*(h + h_ext) + sqrt(h_old/self.grav_z)*un_jump
+                        f += 0.5*self.lam_kap*self.grav_z*h_rie*h_rie*dot(self.test_uv, self.normal)*ds_bnd
                     if funcs is None or 'symm' in funcs:
+                        # NOTE seems inaccurate for granular flow with inclined slope TODO improve, WPan 2020-03-29
                         # assume land boundary
                         # impermeability implies external un=0
                         un_jump = inner(vel_uv_old, self.normal)
-                        h_rie = h_old + sqrt(h_old/g_grav)*un_jump
-                        f += 0.5*g_grav*h_rie*h_rie*dot(self.test_uv, self.normal)*ds_bnd
+                        h_rie = h_old + sqrt(h_old/self.grav_z)*un_jump
+                        f += 0.5*self.lam_kap*self.grav_z*h_rie*h_rie*dot(self.test_uv, self.normal)*ds_bnd
                 # HorizontalAdvectionTerm
                 if include_hori_advection:
                     if funcs is not None:
                         h_jump = h_old - h_ext_old
-                        un_rie = 0.5*inner(vel_uv_old + uv_ext_old, self.normal) + sqrt(g_grav/h_old)*h_jump
+                        un_rie = 0.5*inner(vel_uv_old + uv_ext_old, self.normal) + sqrt(self.grav_z/h_old)*h_jump
                         uv_av = 0.5*(uv_ext + vel_uv)
                         f += h_old*(uv_av[0]*self.test_uv[0]*un_rie + uv_av[1]*self.test_uv[1]*un_rie)*ds_bnd
                     if funcs is None:
+                        # NOTE seems inaccurate for granular flow with inclined slope TODO improve, WPan 2020-03-29
                         # impose impermeability with mirror velocity
                         uv_ext = vel_uv - 2*dot(vel_uv, self.normal)*self.normal
-                        un_rie = 0.5*inner(vel_uv + uv_ext, self.normal)
-                        uv_av = 0.5*(uv_ext + vel_uv)
-                        f += h_old*(uv_av[0]*self.test_uv[0]*un_rie + uv_av[1]*self.test_uv[1]*un_rie)*ds_bnd
                         if self.options.use_lax_friedrichs_velocity:
                             uv_lax_friedrichs = self.options.lax_friedrichs_velocity_scaling_factor
                             gamma = 0.5*abs(dot(mom_uv_old, self.normal))*uv_lax_friedrichs
                             f += gamma*dot(self.test_uv, vel_uv - uv_ext)*ds_bnd
 
-
-
         # bathymetry gradient term
-        bath_grad = as_vector((0, g_grav * h_old * Dx(self.bathymetry, 0), g_grav * h_old * Dx(self.bathymetry, 1)))
+        bath_grad = as_vector((0, self.grav_z * h_old * Dx(self.bathymetry, 0), self.grav_z * h_old * Dx(self.bathymetry, 1)))
         f += -dot(bath_grad, self.test)*self.dx
 
         # source term in vector form
@@ -244,7 +275,7 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         hl, mul, mvl = wl[0], wl[1], wl[2]
 
         E = self.threshold
-        gravity = Function(V.sub(0)).assign(g_grav)
+        gravity = self.grav_z#Function(V.sub(0)).assign(g_grav)
         g = conditional(And(hr < E, hl < E), zero(gravity('+').ufl_shape), gravity('+'))
 
         # Do HLLC flux
@@ -257,8 +288,8 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         vr = dot(ur, N)
         vl = dot(ul, N)
         # wave speed depending on wavelength
-        c_minus = Min(vr - sqrt(g * hr), vl - sqrt(g * hl))
-        c_plus = Min(vr + sqrt(g * hr), vl + sqrt(g * hl))
+        c_minus = Min(vr - sqrt(self.lam_kap * g * hr), vl - sqrt(self.lam_kap * g * hl))
+        c_plus = Min(vr + sqrt(self.lam_kap * g * hr), vl + sqrt(self.lam_kap * g * hl))
         # not divided by zero height
         y = (hl * c_minus * (c_plus - vl) - hr * c_plus * (c_minus - vr)) / (hl * (c_plus - vl) - hr * (c_minus - vr))
         c_s = conditional(abs(hr * (c_minus - vr) - hl * (c_plus - vl)) <= 1e-16, zero(y.ufl_shape), y)
@@ -271,18 +302,18 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         velocity_vr = conditional(hr <= 0, zero(mvr.ufl_shape), (hl_zero * mvr * mvr) / hr)
 
         F1r = as_vector((mur,
-                         velocity_ur + ((g / 2) * (hr * hr)),
+                         velocity_ur + 0.5 * self.lam_kap * g * hr**2,
                          velocityr))
         F2r = as_vector((mvr,
                          velocityr,
-                         velocity_vr + ((g / 2) * (hr * hr))))
+                         velocity_vr + 0.5 * self.lam_kap * g * hr**2))
 
         F1l = as_vector((mul,
-                         velocity_ul + ((g / 2) * (hl * hl)),
+                         velocity_ul + 0.5 * self.lam_kap * g * hl**2,
                          velocityl))
         F2l = as_vector((mvl,
                          velocityl,
-                         velocity_vl + ((g / 2) * (hl * hl))))
+                         velocity_vl + 0.5 * self.lam_kap * g * hl**2))
 
         F_plus = as_vector((F1r, F2r))
         F_minus = as_vector((F1l, F2l))
@@ -326,9 +357,9 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         h, mu, mv = split(w)
 
         if bc_funcs is None: # TODO improve stability with increased time step size
-            mul = Constant(0)
+            mul = mu#Constant(0) # only mu works in granular flow solver
             mur = mu
-            mvl = Constant(0)
+            mvl = mv#Constant(0) # only mu works in granular flow solver
             mvr = mv
             hr = h
             hl = h
@@ -356,8 +387,8 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         vr = dot(ur, N)
         vl = dot(ul, N)
         # wave speed depending on wavelength
-        c_minus = Min(vr - sqrt(g_grav * hr), vl - sqrt(g_grav * hl))
-        c_plus = Min(vr + sqrt(g_grav * hr), vl + sqrt(g_grav * hl))
+        c_minus = Min(vr - sqrt(self.lam_kap * self.grav_z * hr), vl - sqrt(self.lam_kap * self.grav_z * hl))
+        c_plus = Min(vr + sqrt(self.lam_kap * self.grav_z * hr), vl + sqrt(self.lam_kap * self.grav_z * hl))
         # not divided by zero height
         y = (hl * c_minus * (c_plus - vl) - hr * c_plus * (c_minus - vr)) / (hl * (c_plus - vl) - hr * (c_minus - vr))
         c_s = conditional(abs(hr * (c_minus - vr) - hl * (c_plus - vl)) <= 1e-8, zero(y.ufl_shape), y)
@@ -370,18 +401,18 @@ class ShallowWaterEquations(BaseShallowWaterEquation):
         velocity_vl = conditional(hl <= 0, zero(mvl.ufl_shape), (mvl * mvl) / hl)
 
         F1r = as_vector((mur,
-                         velocity_ur + ((g_grav / 2) * (hr * hr)),
+                         velocity_ur + 0.5 * self.lam_kap * self.grav_z * hr**2,
                          velocityr))
         F2r = as_vector((mvr,
                          velocityr,
-                         velocity_vr + ((g_grav / 2) * (hr * hr))))
+                         velocity_vr + 0.5 * self.lam_kap * self.grav_z * hr**2))
 
         F1l = as_vector((mul,
-                         velocity_ul + ((g_grav / 2) * (hl * hl)),
+                         velocity_ul + 0.5 * self.lam_kap * self.grav_z * hl**2,
                          velocityl))
         F2l = as_vector((mvl,
                          velocityl,
-                         velocity_vl + ((g_grav / 2) * (hl * hl))))
+                         velocity_vl + 0.5 * self.lam_kap * self.grav_z * hl**2))
 
         F_plus = as_vector((F1r, F2r))
         F_minus = as_vector((F1l, F2l))

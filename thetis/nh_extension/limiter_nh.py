@@ -242,8 +242,8 @@ class VertexBasedP1DGLimiter(VertexBasedLimiter):
                 for i in range(fs.value_size):
                     tmp_func.dat.data_with_halos[:] = field.dat.data_with_halos[:, i]
                     #super(VertexBasedP1DGLimiter, self).apply(tmp_func)
-                    self.compute_bounds(field)
-                    self.apply_limiter(field)
+                    self.compute_bounds(tmp_func)
+                    self.apply_limiter(tmp_func)
                     field.dat.data_with_halos[:, i] = tmp_func.dat.data_with_halos[:]
                 self.P1DG.restore_work_function(tmp_func)
             else:

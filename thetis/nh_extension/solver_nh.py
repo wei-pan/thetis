@@ -788,7 +788,7 @@ class FlowSolver(FrozenClass):
             self.bathymetry_dg,
             self.options)
 
-        if not self.options.slide_is_granular:
+        if not self.options.flow_is_granular:
             self.eq_ls = landslide_motion.LiquidSlideEquations(
             self.fields.solution_ls.function_space(),
             self.bathymetry_ls,
@@ -1859,7 +1859,7 @@ class FlowSolver(FrozenClass):
             else:
                 H_min = (self.bathymetry_dg.dat.data + self.fields.elev_2d.dat.data).min()
                 if self.options.landslide and (not self.options.slide_is_rigid):
-                    if self.options.slide_is_granular:
+                    if self.options.flow_is_granular:
                         self.bathymetry_ls.assign(0.) # note different reference frame
                     if self.simulation_time <= self.options.t_landslide:
                         H_min = (self.bathymetry_ls.dat.data + self.fields.elev_ls.dat.data).min()
@@ -1968,7 +1968,7 @@ class FlowSolver(FrozenClass):
                                                               semi_implicit=False,
                                                               theta=0.)
                 # timestepper for granular flow
-                if self.options.landslide and self.options.slide_is_granular:
+                if self.options.landslide and self.options.flow_is_granular:
                     timestepper_granular_flow = timeintegrator.CrankNicolson(self.eq_ls, self.fields.solution_ls,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['landslide_motion'],
@@ -1995,7 +1995,7 @@ class FlowSolver(FrozenClass):
                 if update_forcings is not None:
                     update_forcings(self.simulation_time + self.dt)
                 if self.simulation_time <= self.options.t_landslide:
-                    if not self.options.slide_is_granular:
+                    if not self.options.flow_is_granular:
                         solver_liquid_ls.solve()
                         # replace bathymetry by landslide position
                         self.elev_ls_real.project(self.eq_ls.water_height_displacement(elev_ls) + elev_ls)
@@ -2038,7 +2038,7 @@ class FlowSolver(FrozenClass):
 
             # --- Hydrostatic solver ---
             if hydrostatic_solver_2d:
-                if self.options.landslide and (not self.options.slide_is_rigid) and (not self.options.slide_is_granular):
+                if self.options.landslide and (not self.options.slide_is_rigid) and (not self.options.flow_is_granular):
                     if self.simulation_time <= t_epsilon:
                         timestepper_depth_integrated.F += -self.dt*self.eq_sw_nh.add_landslide_term(uv_ls, elev_ls, fields, self.bathymetry_ls, self.bnd_functions['landslide_motion'])
                         timestepper_depth_integrated.update_solver()
@@ -2267,7 +2267,7 @@ class FlowSolver(FrozenClass):
                     a_q = dot(grad(test_q), grad(trial_q)) * dx #+ test_q*inner(grad(q), normal)*ds_surf
                     l_q = Const * dot(grad(test_q), uv_3d) * dx
                     if self.options.landslide:
-                        l_q += Const*self.fields.slide_source_3d*self.normal[vert_ind]*test_q*ds_bottom
+                        l_q += -Const*self.fields.slide_source_3d*self.normal[vert_ind]*test_q*ds_bottom
 
                     if q_is_dg:
                         degree_h, degree_v = fs_q.ufl_element().degree()

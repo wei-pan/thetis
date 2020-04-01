@@ -222,13 +222,21 @@ class FlowSolver(FrozenClass):
         self.fields.h_2d, self.fields.hu_2d, self.fields.hv_2d = self.fields.solution_2d.split()
 
         self.solution_old = Function(self.function_spaces.V_2d)
-        self.solution_wd = Function(self.function_spaces.V_2d)
+        self.solution_mid = Function(self.function_spaces.V_2d)
 
         self.fields.h_elem_size_2d = Function(self.function_spaces.P1_2d)
         self.source = Function(self.function_spaces.V_2d, name='source')
 
         self.bathymetry_dg = Function(self.function_spaces.H_2d).project(self.fields.bathymetry_2d)
         self.fields.elev_2d = Function(self.function_spaces.H_2d)
+
+        # granular flow
+        if self.options.flow_is_granular:
+            self.phi_i = Function(self.function_spaces.P1_2d).assign(self.options.phi_i)
+            self.phi_b = Function(self.function_spaces.P1_2d).assign(self.options.phi_b)
+            self.kap = Function(self.function_spaces.P1_2d)
+            self.uv_div = Function(self.function_spaces.P1_2d)
+            self.strain_rate = Function(self.function_spaces.P1_2d)
 
     def create_equations(self):
         """
@@ -276,7 +284,12 @@ class FlowSolver(FrozenClass):
 
         # ----- Time integrators
         self.field_dic = {
-            'source': self.source,}
+            'source': self.source,
+            'phi_i': self.phi_i,
+            'phi_b': self.phi_b,
+           # 'kap': self.kap,
+            'uv_div': self.uv_div,
+            'strain_rate': self.strain_rate,}
         if self.options.landslide is True:
             self.field_dic.update({'slide_source': self.fields.slide_source,})
         fields = self.field_dic
@@ -526,13 +539,31 @@ class FlowSolver(FrozenClass):
         initial_simulation_time = self.simulation_time
         internal_iteration = 0
 
+        # solver for advancing main equations
         a_rk = self.eq_sw.mass_term(self.eq_sw.trial)
         l_rk = self.eq_sw.mass_term(self.fields.solution_2d) + Constant(self.dt)*self.eq_sw.residual('all',
                                                          self.fields.solution_2d, self.fields.solution_2d,
                                                          self.field_dic, self.field_dic,
                                                          self.bnd_functions['shallow_water'])
-        prob = LinearVariationalProblem(a_rk, l_rk, self.solution_wd)
-        solver = LinearVariationalSolver(prob, solver_parameters=self.options.timestepper_options.solver_parameters)
+        prob_rk = LinearVariationalProblem(a_rk, l_rk, self.solution_mid)
+        solver_rk = LinearVariationalSolver(prob_rk, solver_parameters=self.options.timestepper_options.solver_parameters)
+
+        # solver for div(velocity)
+        h_2d = self.fields.h_2d
+        hu_2d = self.fields.hu_2d
+        hv_2d = self.fields.hv_2d
+        vel_u = conditional(h_2d <= 0, zero(hu_2d.ufl_shape), hu_2d/h_2d)
+        vel_v = conditional(h_2d <= 0, zero(hv_2d.ufl_shape), hv_2d/h_2d)
+        tri_div = TrialFunction(self.uv_div.function_space())
+        test_div = TestFunction(self.uv_div.function_space())
+        a_div = tri_div*test_div*dx
+        l_div = (Dx(vel_u, 0) + Dx(vel_v, 1))*test_div*dx
+        prob_div = LinearVariationalProblem(a_div, l_div, self.uv_div)
+        solver_div = LinearVariationalSolver(prob_div)
+        # solver for strain rate
+        l_sr = 0.5*(Dx(vel_u, 1) + Dx(vel_v, 0))*test_div*dx
+        prob_sr = LinearVariationalProblem(a_div, l_sr, self.strain_rate)
+        solver_sr = LinearVariationalSolver(prob_sr)
 
         while self.simulation_time <= self.options.simulation_end_time - t_epsilon:
 
@@ -543,18 +574,24 @@ class FlowSolver(FrozenClass):
                 assert (not self.options.use_wetting_and_drying)
             elif self.options.timestepper_type == 'SSPRK33':
                 # facilitate wetting and drying treatment at each stage
+                use_ssprk22 = True # i.e. compatible with nh wave model
                 n_stages = self.timestepper.n_stages
                 coeff = [[0., 1.], [3./4., 1./4.], [1./3., 2./3.]]
+                if use_ssprk22:
+                    n_stages = 2
+                    coeff = [[0., 1.], [1./2., 1./2.]]
                 for i_stage in range(n_stages):
                     #self.timestepper.solve_stage(i_stage, self.simulation_time, update_forcings)
-                    solver.solve()
-                    self.fields.solution_2d.assign(coeff[i_stage][0]*self.solution_old + coeff[i_stage][1]*self.solution_wd)
+                    solver_rk.solve()
+                    self.fields.solution_2d.assign(coeff[i_stage][0]*self.solution_old + coeff[i_stage][1]*self.solution_mid)
                     if self.options.use_wetting_and_drying:
                         limiter_start_time = 0.
                         use_limiter = self.options.use_wd_limiter and self.simulation_time >= limiter_start_time
                         self.wd_modification.apply(self.fields.solution_2d, 
                                                    self.options.wetting_and_drying_threshold, 
                                                    use_limiter)
+                    solver_div.solve()
+                    solver_sr.solve()
                        # E = self.options.wetting_and_drying_threshold
                        # ind = np.where(self.fields.solution_2d.sub(0).dat.data[:] <= E)[0]
                        # self.fields.solution_2d.sub(0).dat.data[ind] = E

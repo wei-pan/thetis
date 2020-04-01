@@ -562,18 +562,31 @@ class CommonModelOptions(FrozenConfigurable):
         default_value=[0., 0.], help=r"""
         Position of start point of sponge layer's X-direction. Unit is meters.
         """).tag(config=True)
+
+    # for landslide in the form of rigid, visco-plastic, sediment or granular
     landslide = Bool(False, help=r"""bool: if True, landslide motion solved""").tag(config=True)
     slide_is_rigid = Bool(True, help=r"""bool: if True, slide is rigid, not deformable slide""").tag(config=True)
-    slide_is_granular = Bool(True, help=r"""bool: if True, granular slide flow, else: laminar fluid""").tag(config=True)
-    rho_water = NonNegativeFloat(1000., help="Density of water. Unit is kg m-3").tag(config=True)
-    rho_slide = NonNegativeFloat(2650., help="Density of slide. Unit is kg m-3").tag(config=True)
     slide_viscosity = NonNegativeFloat(0.01, help="Horizontal viscosity for landslide motion equations").tag(config=True)
     t_landslide = PositiveFloat(1000., help="Slide motion only for a limited time in seconds").tag(config=True)
-
     rho_1 = NonNegativeFloat(1., help="Density of lighter phase fluid. Unit is kg m-3").tag(config=True)
     rho_2 = NonNegativeFloat(1000., help="Density of heavier phase fluid. Unit is kg m-3").tag(config=True)
     nu_1 = NonNegativeFloat(1.E-6, help="Viscosity of lighter phase fluid. Unit is m2 s-1").tag(config=True)
     nu_2 = NonNegativeFloat(1.E-3, help="Viscosity of heavier phase fluid. Unit is m2 s-1").tag(config=True)
+
+    # for granular flow
+    flow_is_granular = Bool(False, help=r"""bool: if True, granular slide flow, else: laminar fluid""").tag(config=True)
+    rho_water = NonNegativeFloat(1000., help="Density of water. Unit is kg m-3").tag(config=True)
+    rho_slide = NonNegativeFloat(2650., help="Density of slide. Unit is kg m-3").tag(config=True)
+    phi_i = NonNegativeFloat(
+        0., help=r"""Internal friction angle of the granular solid""").tag(config=True)
+    phi_b = NonNegativeFloat(
+        0., help=r"""Bed friction angle of grains""").tag(config=True)
+    lamda = FiredrakeScalarExpression(
+        Constant(1.), help=r"""Parameter to be calibrated using laboratory measurements in granular flow""").tag(config=True)
+    kap = FiredrakeScalarExpression(
+        None, allow_none=True, help="Earth pressure coefficient").tag(config=True)
+    bed_slope = FiredrakeScalarExpression(
+        Constant(0.), allow_none=True, help="Bed slope for granular flow solver; default: flat bed").tag(config=True)
 
     # for sediment transport
     solve_sediment = Bool(False, help='Solve sediment transport').tag(config=True)

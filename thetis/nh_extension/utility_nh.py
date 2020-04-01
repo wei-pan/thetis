@@ -18,7 +18,6 @@ from firedrake import Function as FiredrakeFunction
 from firedrake import Constant as FiredrakeConstant
 from firedrake import Expression as FiredrakeExpression
 from abc import ABCMeta, abstractmethod
-from . import limiter_nh as limiter
 
 ds_surf = ds_t
 ds_bottom = ds_b
@@ -1826,7 +1825,8 @@ class wetting_and_drying_modification(object):
 
         :param space : FunctionSpace instance
         """
-        self.limiter = limiter.VertexBasedP1DGLimiter(space, time_dependent_mesh=False)
+        from .limiter_nh import VertexBasedP1DGLimiter
+        self.limiter = VertexBasedP1DGLimiter(space, time_dependent_mesh=False)
         if space.ufl_element().degree() != 1:
             raise ValueError('Wetting and drying treatment only supports equal order P1DG temporarily')
         self.P1DG = space
