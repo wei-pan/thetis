@@ -34,3 +34,4 @@ import thetis.nh_extension.solver_sigma as solver_sigma # sigma nh extension
 import thetis.nh_extension.solver_ml as solver_ml  # multi-layer nh extension (2d horizontal mesh)
 import thetis.nh_extension.solver2d_ml as solver2d_ml  # multi-layer nh extension (1d horizontal mesh)
 import thetis.nh_extension.solver_cf as solver_cf  # solver in conservative form
+import thetis.nh_extension.solver2d_cf as solver2d_cf  # solver in conservative form

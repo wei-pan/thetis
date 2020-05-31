@@ -242,7 +242,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                   'uv_3d': self.fields.uv_3d,
                   'q_3d': self.fields.get('q_3d'),
                   'use_pressure_correction': self.options.use_pressure_correction,
-                  'solve_elevation_gradient_separately': self.options.solve_elevation_gradient_separately,
+                  'solve_separate_elevation_gradient': self.options.solve_separate_elevation_gradient,
                   'sponge_damping_3d': self.solver.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_xstart, 
                                                                       alpha=10., sponge_is_2d=False),
                  # 'sigma_dt': self.fields.sigma_dt,

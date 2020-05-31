@@ -2,17 +2,17 @@
 Module for barotropic/baroclinic non-hydrostatic solver in sigma mesh
 """
 from __future__ import absolute_import
+from .utility_nh import *
 from . import shallowwater_nh
 from . import shallowwater_cf
 from . import landslide_motion
 from . import momentum_sigma
 from . import tracer_sigma
 from . import coupled_timeintegrator_nh
-from .utility_nh import *
+from . import limiter_nh as limiter
 from .. import turbulence
 from .. import timeintegrator
 from .. import rungekutta
-from . import limiter_nh as limiter
 import time as time_mod
 from mpi4py import MPI
 from .. import exporter
@@ -534,7 +534,7 @@ class FlowSolver(FrozenClass):
             self.fields.baroc_head_3d = Function(self.function_spaces.H_bhead)
             self.fields.int_pg_3d = Function(self.function_spaces.U_int_pg, name='int_pg_3d')
         else:
-            self.fields.density_3d = Function(self.function_spaces.H, name='Density').assign(self.options.rho_water) # WPan added.
+            self.fields.density_3d = Function(self.function_spaces.H, name='Density').assign(self.options.rho_fluid) # WPan added.
         if self.options.coriolis_frequency is not None:
             if isinstance(self.options.coriolis_frequency, FiredrakeConstant):
                 self.fields.coriolis_3d = self.options.coriolis_frequency
@@ -691,26 +691,9 @@ class FlowSolver(FrozenClass):
             self.temp_3d_mid = Function(self.function_spaces.H)
 
         # functions for landslide modelling
-        self.fields.slide_source = Function(self.function_spaces.H_2d)
+        self.fields.slide_source_2d = Function(self.function_spaces.H_2d)
         self.fields.slide_source_3d = Function(self.function_spaces.H)
         self.bathymetry_ls = Function(self.function_spaces.H_2d)
-        # for granular landslide
-        if self.options.landslide and self.options.flow_is_granular:
-            self.fs_granular = MixedFunctionSpace([self.function_spaces.H_2d, self.function_spaces.H_2d, self.function_spaces.H_2d])
-            self.fields.solution_ls = Function(self.fs_granular)
-            self.solution_ls_old = Function(self.fs_granular)
-            self.solution_ls_mid = Function(self.fs_granular)
-            self.fields.h_2d, self.fields.hu_2d, self.fields.hv_2d = self.fields.solution_ls.split()
-            self.phi_i = Function(self.function_spaces.P1_2d).assign(self.options.phi_i)
-            self.phi_b = Function(self.function_spaces.P1_2d).assign(self.options.phi_b)
-            self.kap = Function(self.function_spaces.P1_2d)
-            self.uv_div = Function(self.function_spaces.P1_2d)
-            self.strain_rate = Function(self.function_spaces.P1_2d)
-            self.source = Function(self.fs_granular)
-        elif self.options.landslide and self.options.slide_is_rigid:
-            self.fields.solution_ls = Function(self.function_spaces.V_2d)
-            self.solution_ls_old = Function(self.function_spaces.V_2d)
-            self.solution_ls_mid = Function(self.function_spaces.V_2d)
 
     def create_equations(self):
         """
@@ -749,14 +732,6 @@ class FlowSolver(FrozenClass):
             self.function_spaces.U_2d,
             self.bathymetry_dg,
             self.options)
-
-        if self.options.landslide and self.options.flow_is_granular:
-            self.eq_ls = shallowwater_cf.ShallowWaterEquations(
-                self.fields.solution_ls.function_space(),
-                self.fields.bathymetry_2d,
-                self.options
-            )
-            self.eq_ls.bnd_functions = self.bnd_functions['landslide_motion']
 
         expl_bottom_friction = self.options.use_bottom_friction and not self.options.use_implicit_vertical_diffusion
         self.eq_momentum = momentum_sigma.MomentumEquation(self.fields.uv_3d.function_space(),
@@ -1005,14 +980,6 @@ class FlowSolver(FrozenClass):
             if uv_3d is None:
                 ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_3d,
                                    elem_height=self.fields.v_elem_size_3d).solve()
-        # granular landslide
-        if self.options.landslide and self.options.flow_is_granular:
-            h_ls, hu_ls, hv_ls = self.fields.solution_ls.split()
-            if h_slide is not None:
-                h_ls.project(h_slide)
-            if uv_slide is not None:
-                hu_ls.project(uv_slide[0]*h_ls)
-                hv_ls.project(uv_slide[1]*h_ls)
 
         if uv_3d is not None:
             self.fields.uv_3d.project(uv_3d)
@@ -1233,7 +1200,7 @@ class FlowSolver(FrozenClass):
 #
        # lin_solver.solve()
 
-    def set_sponge_damping(self, length, x_start, y_start =None, alpha=10., sponge_is_2d=True):
+    def set_sponge_damping(self, length, x_start, y_start=None, alpha=10., sponge_is_2d=True):
         """
         Set damping terms to reduce the reflection on solid boundaries.
         """
@@ -1287,22 +1254,6 @@ class FlowSolver(FrozenClass):
             else:
                 damp_vector[i] = 0.
         return damping_coeff
-
-    def get_alpha(self, H0):
-        """
-        An alternative to try alpha, finding minimum alpha to let all depths below the threshold wd_mindep.
-
-        :arg H0: Minimum water depth
-        """     
-        wd_mindep = self.options.wetting_and_drying_threshold     
-        if H0 > 1.0E-5:
-            return 0.
-        elif not self.options.constant_mindep:
-            return np.sqrt(0.25 * wd_mindep**2 - 0.5 * wd_mindep * H0) + 0.5 * wd_mindep # new formulated function, WPan
-            #return np.sqrt(self.options.wd_mindep**2 - self.options.wd_mindep*H0) + self.options.wd_mindep # artificial porosity method
-            #return np.sqrt(4*self.options.wd_mindep*(self.options.wd_mindep-H0)) # original bathymetry changed method
-        else:
-            return wd_mindep
 
     def slide_shape(self, simulation_time):
         """
@@ -1468,50 +1419,6 @@ class FlowSolver(FrozenClass):
         initial_simulation_time = self.simulation_time
         internal_iteration = 0
 
-        # solver for advancing granular landslide equations
-        if self.options.landslide and self.options.flow_is_granular:
-            field_ls = {
-                'source': self.source,
-                'phi_i': self.phi_i,
-                'phi_b': self.phi_b,
-               # 'kap': self.kap,
-                'uv_div': self.uv_div,
-                'strain_rate': self.strain_rate,}
-            a_ls = self.eq_ls.mass_term(self.eq_ls.trial)
-            l_ls = self.eq_ls.mass_term(self.fields.solution_ls) + Constant(self.dt)*self.eq_ls.residual('all',
-                                                         self.fields.solution_ls, self.fields.solution_ls,
-                                                         field_ls, field_ls,
-                                                         self.bnd_functions['landslide_motion'])
-            prob_ls = LinearVariationalProblem(a_ls, l_ls, self.solution_ls_mid)
-            solver_parameters_ls = {
-                'snes_type': 'ksponly',
-                'ksp_type': 'cg',
-                'pc_type': 'bjacobi',
-                'sub_ksp_type': 'preonly',
-                'sub_pc_type': 'ilu',
-                'mat_type': 'aij',}
-            solver_ls = LinearVariationalSolver(prob_ls, solver_parameters=solver_parameters_ls)
-
-            # solver for div(velocity)
-            h_2d = self.fields.h_2d
-            hu_2d = self.fields.hu_2d
-            hv_2d = self.fields.hv_2d
-            vel_u = conditional(h_2d <= 0, zero(hu_2d.ufl_shape), hu_2d/h_2d)
-            vel_v = conditional(h_2d <= 0, zero(hv_2d.ufl_shape), hv_2d/h_2d)
-            tri_div = TrialFunction(self.uv_div.function_space())
-            test_div = TestFunction(self.uv_div.function_space())
-            a_div = tri_div*test_div*dx
-            l_div = (Dx(vel_u, 0) + Dx(vel_v, 1))*test_div*dx
-            prob_div = LinearVariationalProblem(a_div, l_div, self.uv_div)
-            solver_div = LinearVariationalSolver(prob_div)
-            # solver for strain rate
-            l_sr = 0.5*(Dx(vel_u, 1) + Dx(vel_v, 0))*test_div*dx
-            prob_sr = LinearVariationalProblem(a_div, l_sr, self.strain_rate)
-            solver_sr = LinearVariationalSolver(prob_sr)
-
-            if self.options.use_wetting_and_drying:
-                wd_modification = wetting_and_drying_modification(self.function_spaces.H_2d)
-
         while self.simulation_time <= self.options.simulation_end_time - t_epsilon:
 
             hydrostatic_solver_2d = False #TODO use more common set control
@@ -1536,8 +1443,6 @@ class FlowSolver(FrozenClass):
                 self.temp_3d_old.assign(self.fields.temp_3d)
 
             self.solution_2d_old.assign(self.fields.solution_2d)
-            if self.options.landslide and self.options.flow_is_granular:
-                self.solution_ls_old.assign(self.fields.solution_ls)
 
             # ----- Self-defined time integrator for layer-integrated NH solver
             fields_dav = {
@@ -1556,8 +1461,8 @@ class FlowSolver(FrozenClass):
                     'uv': self.fields.uv_2d,
                     'bathymetry_init': self.fields.bathymetry_2d,
                     'slide_viscosity': self.options.slide_viscosity,
-                    'slide_source': self.fields.slide_source,
-                    'sponge_damping_2d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_xstart, alpha=10., sponge_is_2d=True),
+                    'slide_source': self.fields.slide_source_2d,
+                    'sponge_damping_2d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_start, alpha=10., sponge_is_2d=True),
                          }
 
             solver_parameters = {'snes_type': 'newtonls', # ksponly, newtonls
@@ -1609,7 +1514,7 @@ class FlowSolver(FrozenClass):
                                                               theta=0.)
 
             # --- Hydrostatic solver ---
-            if hydrostatic_solver_2d: #TODO elev_ls should be distinguished
+            if hydrostatic_solver_2d:
                 if self.options.landslide and (not self.options.slide_is_rigid) and (not self.options.flow_is_granular):
                     if self.simulation_time <= t_epsilon:
                         self.bathymetry_ls.project(self.bathymetry_cg_2d)
@@ -1622,7 +1527,7 @@ class FlowSolver(FrozenClass):
                 if self.options.landslide and self.options.slide_is_rigid:
                     self.bathymetry_dg.project(self.fields.bathymetry_2d - self.slide_shape(self.simulation_time))
                     elev_ls.project(-self.bathymetry_dg)
-                    self.fields.slide_source.project((self.slide_shape(self.simulation_time + self.dt) - self.slide_shape(self.simulation_time))/self.dt)
+                    self.fields.slide_source_2d.project((self.slide_shape(self.simulation_time + self.dt) - self.slide_shape(self.simulation_time))/self.dt)
 
                 timestepper_depth_integrated.advance(self.simulation_time, update_forcings)
 
@@ -1781,8 +1686,8 @@ class FlowSolver(FrozenClass):
                           'omega': self.fields.omega,
                           'q_3d': self.fields.q_3d,
                           'use_pressure_correction': self.options.use_pressure_correction,
-                          'solve_elevation_gradient_separately': self.options.solve_elevation_gradient_separately,
-                          'sponge_damping_3d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_xstart, alpha=10., sponge_is_2d=False),
+                          'solve_separate_elevation_gradient': self.options.solve_separate_elevation_gradient,
+                          'sponge_damping_3d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_start, alpha=10., sponge_is_2d=False),
                               }
                     a_mom = dot(tri_uv_3d, test_uv_3d)*dx
                     l_mom = dot(uv_3d, test_uv_3d)*dx + self.dt*self.eq_momentum.residual('all', uv_3d, uv_3d, fields_3d, fields_3d, self.bnd_functions['momentum'])
@@ -1852,40 +1757,18 @@ class FlowSolver(FrozenClass):
                    # timestepper_operator_splitting.F += -self.dt*g_grav*inner(Dx(self.elev_2d_mid, 0), test_uta_2d)*dx
                    # timestepper_operator_splitting.update_solver()
 
-                if self.options.landslide and self.options.flow_is_granular:
-                    # facilitate wetting and drying treatment at each stage
-                    use_ssprk22 = True # i.e. compatible with nh wave model
-                    n_stages = self.timestepper.n_stages
-                    coeff = [[0., 1.], [3./4., 1./4.], [1./3., 2./3.]]
-                    if use_ssprk22:
-                        n_stages = 2
-                        coeff = [[0., 1.], [1./2., 1./2.]]
-                    for i_stage in range(n_stages):
-                        #self.timestepper.solve_stage(i_stage, self.simulation_time, update_forcings)
-                        solver_ls.solve()
-                        self.fields.solution_ls.assign(coeff[i_stage][0]*self.solution_ls_old + coeff[i_stage][1]*self.solution_ls_mid)
-                        if self.options.use_wetting_and_drying:
-                            limiter_start_time = 0.
-                            use_limiter = self.options.use_wd_limiter and self.simulation_time >= limiter_start_time
-                            wd_modification.apply(self.fields.solution_ls, self.options.wetting_and_drying_threshold, use_limiter)
-                        solver_div.solve()
-                        solver_sr.solve()
-
-                    self.bathymetry_cg_2d.project(self.bathymetry_dg - self.fields.h_2d)
-                    self.fields.slide_source.project((self.fields.solution_ls.sub(0) - self.solution_ls_old.sub(0))/self.dt)
-
                 if self.options.landslide:
                     if update_forcings is not None:
                         update_forcings(self.simulation_time)
                     self.bathymetry_cg_2d.project(self.bathymetry_dg)
                     if self.simulation_time <= t_epsilon:
                         bath_2d_to_3d = ExpandFunctionTo3d(self.bathymetry_cg_2d, self.fields.bathymetry_3d)
-                        slide_source_2d_to_3d = ExpandFunctionTo3d(self.fields.slide_source, self.fields.slide_source_3d)
+                        slide_source_2d_to_3d = ExpandFunctionTo3d(self.fields.slide_source_2d, self.fields.slide_source_3d)
                     bath_2d_to_3d.solve()
 
                 n_stages = 2
                 if self.options.use_operator_splitting:
-                    assert self.options.solve_elevation_gradient_separately is True, \
+                    assert self.options.solve_separate_elevation_gradient is True, \
                         'Use operator splitting needs solving elevation gradient separately!'
                     for i_stage in range(n_stages):
                         # 2d advance
@@ -1991,7 +1874,7 @@ class FlowSolver(FrozenClass):
 
                         advancing_elev_implicitly = False
                         # 2d advance
-                        if self.options.solve_elevation_gradient_separately and self.options.update_free_surface:
+                        if self.options.solve_separate_elevation_gradient and self.options.update_free_surface:
                             self.uv_averager.solve()
                             self.extract_surf_dav_uv.solve()
                             self.copy_uv_dav_to_uv_dav_3d.solve()
@@ -2009,7 +1892,7 @@ class FlowSolver(FrozenClass):
                             self.copy_uv_to_uv_dav_3d.solve()
                             self.fields.uv_3d.assign(self.fields.uv_3d + (self.fields.uv_dav_3d - self.uv_dav_3d_mid))
 
-                        if self.options.landslide and self.options.flow_is_granular:
+                        if self.options.landslide:
                             slide_source_2d_to_3d.solve()
 
                         # update non-hydrostatic pressure

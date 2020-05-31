@@ -2025,13 +2025,19 @@ class wetting_and_drying_modification(object):
             """
         return wd_treatment_kernel
 
-    def apply(self, solution, wd_threshold=1e-4, use_limiter=True):
+    def apply(self, solution, wd_threshold=1e-4, use_limiter=True, use_eta_solution=False, bathymetry=None):
         """
         Re-computes centroids and applies wetting and drying treatment and limiter to given field
         """
         self.wd_solution.assign(0.)
+
         h_wd, hu_wd, hv_wd = self.wd_solution.split()
         h, hu, hv = solution.split()
+
+        if use_eta_solution:
+            assert bathymetry is not None and element_continuity(bathymetry.function_space().ufl_element()).horizontal == 'dg'
+            h.dat.data[:] += bathymetry.dat.data[:]
+
         # calculate cell average
         limiter_label = 0
         if use_limiter:
@@ -2057,3 +2063,5 @@ class wetting_and_drying_modification(object):
         par_loop(wd_treatment_kernel, dx, args)
 
         solution.assign(self.wd_solution)
+        if use_eta_solution:
+            h.dat.data[:] += -bathymetry.dat.data[:]

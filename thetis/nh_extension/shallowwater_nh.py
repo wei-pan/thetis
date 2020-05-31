@@ -682,7 +682,7 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
                           uv_up[1]*jump(self.u_test[1], huv_old[1]*self.normal[1]))*self.dS
                         # Lax-Friedrichs stabilization
                         if self.options.use_lax_friedrichs_velocity:
-                            uv_lax_friedrichs = fields_old.get('lax_friedrichs_velocity_scaling_factor')
+                            uv_lax_friedrichs = self.options.lax_friedrichs_velocity_scaling_factor#fields_old.get('lax_friedrichs_velocity_scaling_factor')
                             gamma = 0.5*abs(un_av)*uv_lax_friedrichs
                             f += const*gamma*dot(jump(self.u_test), jump(huv))*self.dS
                             for bnd_marker in self.boundary_markers:
@@ -733,7 +733,7 @@ class HorizontalAdvectionTerm(ShallowWaterMomentumTerm):
                 f += (uv_up*jump(self.u_test, uv_old*self.normal[0]))*self.dS
                 # Lax-Friedrichs stabilization
                 if self.options.use_lax_friedrichs_velocity:
-                    uv_lax_friedrichs = fields_old.get('lax_friedrichs_velocity_scaling_factor')
+                    uv_lax_friedrichs = self.options.lax_friedrichs_velocity_scaling_factor#fields_old.get('lax_friedrichs_velocity_scaling_factor')
                     gamma = 0.5*abs(un_av)*uv_lax_friedrichs
                     f += gamma*dot(jump(self.u_test), jump(uv))*self.dS
                     for bnd_marker in self.boundary_markers:
@@ -1222,7 +1222,7 @@ class LandslideTerm(ShallowWaterContinuityTerm):
             for bnd_marker in self.boundary_markers:
                 funcs = bnd_conditions.get(bnd_marker)
                 ds_bnd = ds(int(bnd_marker), degree=self.quad_degree)
-                if funcs is None or 'un' in funcs: # probably for 'None', on wall, dot(uv, self.normal) absolutely = 0, so 'None' can be cancelled, WPan; maybe 'uv' also should be added 
+                if funcs is None or 'un' in funcs:
                     f += -const*total_h*dot(uv, self.normal)*self.eta_test*ds_bnd
 
         if self.horizontal_domain_is_2d:

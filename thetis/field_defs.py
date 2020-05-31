@@ -378,7 +378,7 @@ field_metadata['elev_ls'] = {
     'unit': 'm',
     'filename': 'Elevation2d_ls',
 }
-field_metadata['slide_source'] = {
+field_metadata['slide_source_2d'] = {
     'name': '2D slide source for displacement',
     'shortname': '2D slide source for displacement',
     'unit': 'm s-1',
@@ -426,21 +426,45 @@ field_metadata['c_3d'] = {
     'unit': '-',
     'filename': 'Concentration3d',
 }
-field_metadata['h_2d'] = {
-    'name': 'Water depth in non-conservative form',
-    'shortname': 'Water depth',
+field_metadata['h_ls'] = {
+    'name': 'Landslide height',
+    'shortname': 'Slide height',
     'unit': 'm',
-    'filename': 'WaterHeight',
+    'filename': 'SlideHeight',
+}
+field_metadata['hu_ls'] = {
+    'name': 'Landslide momentum hu',
+    'shortname': 'Slide momentum hu',
+    'unit': 'm2 s-1',
+    'filename': 'Hu_ls',
+}
+field_metadata['hv_ls'] = {
+    'name': 'Landslide momentum hv',
+    'shortname': 'Slide momentum hv',
+    'unit': 'm2 s-1',
+    'filename': 'Hv_ls',
 }
 field_metadata['hu_2d'] = {
-    'name': 'Momentum hu in non-conservative form',
+    'name': '2D momentum hu',
     'shortname': 'Momentum hu',
     'unit': 'm2 s-1',
     'filename': 'MomentumHu',
 }
 field_metadata['hv_2d'] = {
-    'name': 'Momentum hv in non-conservative form',
+    'name': '2D momentum hv',
     'shortname': 'Momentum hv',
     'unit': 'm2 s-1',
     'filename': 'MomentumHv',
+}
+field_metadata['mom_3d'] = {
+    'name': '3D momentum in conservative form',
+    'shortname': '3D momentum',
+    'unit': 'm s-1',
+    'filename': 'Momentum3d',
+}
+field_metadata['mom_2d'] = {
+    'name': '2D momentum in conservative form',
+    'shortname': '2D momentum',
+    'unit': 'm s-1',
+    'filename': 'Momentum2d',
 }

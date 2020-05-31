@@ -776,7 +776,7 @@ class ElevationGradientTerm(MomentumTerm):
             if q_3d is not None:
                 f_q += 1./rho_0 * dot(grad(q_3d), self.test) * self.dx 
         # use operator splitting method, here not including the elevation gradient term
-        if fields_old.get('solve_elevation_gradient_separately') is True:
+        if fields_old.get('solve_separate_elevation_gradient') is True:
             return -f_q
 
         if self.horizontal_domain_is_2d:

@@ -395,7 +395,7 @@ class FlowSolver(FrozenClass):
             self.options)
         self.eq_free_surface.bnd_functions = self.bnd_functions['shallow_water']
 
-        if not self.options.solve_conservative_momentum:
+        if self.options.solve_elevation_gradient_separately:
             self.eq_operator_splitting = shallowwater_cf.OperatorSplitEquations(
                 self.fields.solution_2d.function_space(),
                 self.fields.bathymetry_2d,
@@ -416,12 +416,12 @@ class FlowSolver(FrozenClass):
 
         # --- operators
         self.copy_elev_to_3d = ExpandFunctionTo3d(self.fields.elev_2d, self.fields.elev_3d)
-        if self.options.solve_conservative_momentum:
-            solution_3d = self.fields.mom_3d
-            solution_2d = self.fields.mom_2d
-        else:
+        if self.options.solve_elevation_gradient_separately:
             solution_3d = self.fields.uv_3d
             solution_2d = self.fields.uv_2d
+        else:
+            solution_3d = self.fields.mom_3d
+            solution_2d = self.fields.mom_2d
         self.uv_averager = VerticalIntegrator(solution_3d,
                                               self.fields.uv_dav_3d,
                                               bottom_to_top=True,
@@ -497,20 +497,16 @@ class FlowSolver(FrozenClass):
             }
         self.set_time_step()
 
-        if not self.options.solve_conservative_momentum:
+        if self.options.solve_elevation_gradient_separately:
             self.timestepper_operator_splitting = timeintegrator.CrankNicolson(self.eq_operator_splitting, self.fields.solution_2d,
                                                               self.fields_sw, self.dt, bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=self.options.timestepper_options.solver_parameters_2d_swe)
-            self.timestepper_free_surface_implicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_fs,
+
+            self.timestepper_free_surface = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_fs,
                                                               self.fields_sw, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               semi_implicit=False,
                                                               theta=0.5)
-            self.timestepper_free_surface_explicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_fs,
-                                                              self.fields_sw, self.dt,
-                                                              bnd_conditions=self.bnd_functions['shallow_water'],
-                                                              semi_implicit=False,
-                                                              theta=1.)
 
         if self.options.timestepper_type == 'SSPRK33': # TODO delete
             self.timestepper = rungekutta.SSPRK33(self.eq_sw, self.fields.solution_2d,
@@ -829,11 +825,11 @@ class FlowSolver(FrozenClass):
         internal_iteration = 0
 
         # solver for advancing 3d momentum equations
-        solution_3d = self.fields.uv_3d
-        solution_mid = self.uv_3d_mid
-        if self.options.solve_conservative_momentum:
-            solution_3d = self.fields.mom_3d
-            solution_mid = self.mom_3d_mid
+        solution_3d = self.fields.mom_3d
+        solution_mid = self.mom_3d_mid
+        if self.options.solve_elevation_gradient_separately:
+            solution_3d = self.fields.uv_3d
+            solution_mid = self.uv_3d_mid
         a_mom = self.eq_momentum.mass_term(self.eq_momentum.trial)
         l_mom = (self.eq_momentum.mass_term(solution_3d) + Constant(self.dt)*
                 self.eq_momentum.residual('all', solution_3d, solution_3d, 
@@ -1004,68 +1000,150 @@ class FlowSolver(FrozenClass):
             self.elev_2d_old.assign(self.fields.elev_2d)
             if self.options.landslide:
                 self.solution_ls_old.assign(self.fields.solution_ls)
-                self.solution_ls_mid.assign(self.fields.solution_ls)
 
             h_2d_array = self.fields.elev_2d.dat.data + self.fields.bathymetry_2d.dat.data
             h_3d_array = self.fields.elev_3d.dat.data + self.fields.bathymetry_3d.dat.data
 
-            couple_granular_and_wave_in_ssprk = True
-            if (not couple_granular_and_wave_in_ssprk):
-                if self.options.flow_is_granular:
-                    if not self.options.lamda == 0.:
-                        self.h_2d_cg.project(self.fields.bathymetry_2d + self.fields.elev_2d)
-                        self.h_2d_ls.dat.data[:] = self.h_2d_cg.dat.data[:]
-                    for i in range(self.options.n_dt):
-                        # solve fluid pressure on slide
-                       # self.extract_bot_q.solve()
-                        self.fields.bathymetry_2d.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
-                        solver_pf.solve()
-                        self.grad_p_ls.dat.data[:] = self.grad_p.dat.data[:]
-
-                        self.solution_ls_mid.assign(self.fields.solution_ls)
-                        for i_stage in range(n_stages):
-                            #self.timestepper.solve_stage(i_stage, self.simulation_time, update_forcings)
-                            solver_ls.solve()
-                            self.fields.solution_ls.assign(coeff[i_stage][0]*self.solution_ls_mid + coeff[i_stage][1]*self.solution_ls_tmp)
-                            if self.options.use_wetting_and_drying:
-                                limiter_start_time = 0.
-                                limiter_end_time = self.options.simulation_end_time - t_epsilon
-                                use_limiter = self.options.use_limiter_for_granular and self.simulation_time >= limiter_start_time and self.simulation_time <= limiter_end_time
-                                self.wd_modification_ls.apply(self.fields.solution_ls, self.options.wetting_and_drying_threshold, use_limiter)
-                            solver_div.solve()
-                           # solver_sr.solve()
-
-                if self.options.landslide:
-                    # update landslide motion source
-                    if update_forcings is not None:
-                        update_forcings(self.simulation_time + self.dt)
-
-                    ind_wet_2d = np.where(h_2d_array[:] > 0)[0]
-                    if self.simulation_time >= 0.:
-                        self.fields.slide_source_2d.assign(0.)
-                        self.fields.slide_source_2d.dat.data[ind_wet_2d] = (self.fields.h_ls.dat.data[ind_wet_2d] 
-                                                                            - self.solution_ls_old.sub(0).dat.data[ind_wet_2d])/self.dt/self.slope.dat.data.min()
-                    # copy slide source to 3d
-                    self.copy_slide_source_to_3d.solve()
-
-                    # update bathymetry
+            if self.options.flow_is_granular:
+                if not self.options.lamda == 0.:
+                    self.h_2d_cg.project(self.fields.bathymetry_2d + self.fields.elev_2d)
+                    self.h_2d_ls.dat.data[:] = self.h_2d_cg.dat.data[:]
+                for i in range(self.options.n_dt):
+                    # solve fluid pressure on slide
+                   # self.extract_bot_q.solve()
                     self.fields.bathymetry_2d.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
-                    self.copy_bath_to_3d.solve()
+                    solver_pf.solve()
+                    self.grad_p_ls.dat.data[:] = self.grad_p.dat.data[:]
 
-                    if self.options.use_hllc_flux:
-                        # restore water depth without landslide
-                        ind_ls_2d = np.where(h_2d_array[:] <= 0)[0]
-                        self.fields.elev_2d.dat.data[ind_ls_2d] = self.elev_2d_init.dat.data[ind_ls_2d]
-                        # update elevation to kepp positive water depth
-                        ind_dry_2d = np.where(h_2d_array[:] <= 0)[0]
-                        self.fields.elev_2d.dat.data[ind_dry_2d] = -self.fields.bathymetry_2d.dat.data[ind_dry_2d]
+                    self.solution_ls_mid.assign(self.fields.solution_ls)
+                    for i_stage in range(n_stages):
+                        #self.timestepper.solve_stage(i_stage, self.simulation_time, update_forcings)
+                        solver_ls.solve()
+                        self.fields.solution_ls.assign(coeff[i_stage][0]*self.solution_ls_mid + coeff[i_stage][1]*self.solution_ls_tmp)
+                        if self.options.use_wetting_and_drying:
+                            limiter_start_time = 0.
+                            limiter_end_time = self.options.simulation_end_time - t_epsilon
+                            use_limiter = self.options.use_limiter_for_granular and self.simulation_time >= limiter_start_time and self.simulation_time <= limiter_end_time
+                            self.wd_modification_ls.apply(self.fields.solution_ls, self.options.wetting_and_drying_threshold, use_limiter)
+                        solver_div.solve()
+                       # solver_sr.solve()
 
-                        self.elev_2d_old.assign(self.fields.elev_2d)
-                        self.elev_2d_fs.assign(self.fields.elev_2d)
-                        self.copy_elev_to_3d.solve()
+            if self.options.landslide:
+                # update landslide motion source
+                if update_forcings is not None:
+                    update_forcings(self.simulation_time + self.dt)
 
-            if self.options.solve_conservative_momentum and (not self.options.no_wave_flow):
-                assert (not couple_granular_and_wave_in_ssprk)
+                ind_wet_2d = np.where(h_2d_array[:] > 0)[0]
+                if self.simulation_time >= 0.:
+                    self.fields.slide_source_2d.assign(0.)
+                    self.fields.slide_source_2d.dat.data[ind_wet_2d] = (self.fields.h_ls.dat.data[ind_wet_2d] 
+                                                                        - self.solution_ls_old.sub(0).dat.data[ind_wet_2d])/self.dt/self.slope.dat.data.min()
+                # copy slide source to 3d
+                self.copy_slide_source_to_3d.solve()
+
+                # update bathymetry
+                self.fields.bathymetry_2d.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
+                self.copy_bath_to_3d.solve()
+
+                if self.options.use_hllc_flux:
+                    # restore water depth without landslide
+                    ind_ls_2d = np.where(h_2d_array[:] <= 0)[0]
+                    self.fields.elev_2d.dat.data[ind_ls_2d] = self.elev_2d_init.dat.data[ind_ls_2d]
+                    # update elevation to kepp positive water depth
+                    ind_dry_2d = np.where(h_2d_array[:] <= 0)[0]
+                    self.fields.elev_2d.dat.data[ind_dry_2d] = -self.fields.bathymetry_2d.dat.data[ind_dry_2d]
+
+                    self.elev_2d_old.assign(self.fields.elev_2d)
+                    self.elev_2d_fs.assign(self.fields.elev_2d)
+                    self.copy_elev_to_3d.solve()
+
+            if self.options.solve_elevation_gradient_separately and (not self.options.no_wave_flow):
+
+                for i_stage in range(n_stages):
+                    # 2d advance
+                    advancing_elev_twice = False
+                    if self.options.update_free_surface:
+                        if i_stage == 0 and advancing_elev_twice:
+                            self.copy_uv_to_uv_dav_3d.solve()
+                            self.uv_dav_3d_mid.assign(self.fields.uv_dav_3d)
+                            timestepper_operator_splitting_explicit.advance(self.simulation_time, update_forcings)
+                            self.copy_elev_to_3d.solve()
+                            solver_sigma_dt.solve()
+                            solver_sigma_dx.solve()
+                            if self.horizontal_domain_is_2d:
+                                solver_sigma_dy.solve()
+                        elif i_stage == 1:
+                            self.uv_averager.solve() # uv_3d -> uv_dav_3d
+                            self.extract_surf_dav_uv.solve() # uv_dav_3d -> uv_2d
+                            self.fields.elev_2d.assign(self.elev_2d_old)
+                            self.copy_uv_to_uv_dav_3d.solve()
+                            self.uv_dav_3d_mid.assign(self.fields.uv_dav_3d)
+                            self.timestepper_operator_splitting.advance(self.simulation_time, update_forcings)
+                            if self.options.use_limiter_for_elevation:
+                                if self.limiter_h is not None:
+                                    self.limiter_h.apply(self.fields.elev_2d)
+                                if self.limiter_u is not None:
+                                    self.limiter_u.apply(self.fields.uv_2d)
+                            self.copy_elev_to_3d.solve()
+                            solver_sigma_dt.solve()
+                            solver_sigma_dx.solve()
+                            solver_sigma_dy.solve()
+
+                    # 3d advance
+                    solver_omega.solve()
+                    solver_mom.solve()
+                    self.fields.uv_3d.assign(self.uv_3d_mid)
+                    if self.options.use_limiter_for_velocity:
+                        self.uv_limiter.apply(self.fields.uv_3d)
+
+                    # wetting and drying treatment
+                    if self.options.use_wetting_and_drying:
+                        ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
+                        self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
+
+                    if i_stage == 0 and advancing_elev_twice:
+                        # update 2d coupling, i.e. including the elevation gradient contribution
+                        if self.options.update_free_surface:
+                            self.copy_uv_to_uv_dav_3d.solve()
+                            self.fields.uv_3d.assign(self.fields.uv_3d - (self.uv_dav_3d_mid - self.fields.uv_dav_3d))
+                    elif i_stage == 1:
+                        self.fields.uv_3d.assign(0.5*(self.uv_3d_old + self.fields.uv_3d))
+                        # update 2d coupling, i.e. including the elevation gradient contribution
+                        if self.options.update_free_surface:
+                            self.copy_uv_to_uv_dav_3d.solve()
+                            self.fields.uv_3d.assign(self.fields.uv_3d - (self.uv_dav_3d_mid - self.fields.uv_dav_3d))
+
+                        # solve nh pressure
+                        solver_q.solve()
+                        # update velocity
+                        solver_u.solve()
+                        # wetting and drying treatment
+                        if self.options.use_wetting_and_drying:
+                            ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
+                            self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
+
+                        if self.options.update_free_surface:
+                            self.uv_averager.solve()
+                            self.extract_surf_dav_uv.solve()
+                            self.elev_2d_fs.assign(self.elev_2d_old)
+                            # solve free surface equation
+                            self.timestepper_free_surface.advance(self.simulation_time, update_forcings)
+                            self.fields.elev_2d.assign(self.elev_2d_fs)
+                            if self.options.use_limiter_for_elevation:
+                                if self.limiter_h is not None:
+                                    self.limiter_h.apply(self.fields.elev_2d)
+                           # ind_dry_2d = np.where(h_2d_array[:] <= 0)[0]
+                           # self.fields.elev_2d.dat.data[ind_dry_2d] = - self.fields.bathymetry_2d.dat.data[ind_dry_2d]
+                            self.copy_elev_to_3d.solve()
+                            solver_sigma_dt.solve()
+                            solver_sigma_dx.solve()
+                            solver_sigma_dy.solve()
+
+                        solver_omega.solve()
+
+
+            elif (not self.options.no_wave_flow):
+
                # solver_sigma_dt.solve()
                 solver_sigma_dx.solve()
                 solver_sigma_dy.solve()
@@ -1128,6 +1206,7 @@ class FlowSolver(FrozenClass):
                                                        use_limiter=False, use_eta_solution=True, bathymetry=self.fields.bathymetry_2d)
                         self.copy_elev_to_3d.solve()
 
+
                     # prevent negative water depth
                    # ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
                    # ind_dry_2d = np.where(h_2d_array[:] <= 0)[0]
@@ -1139,126 +1218,6 @@ class FlowSolver(FrozenClass):
                     solver_sigma_dx.solve()
                     solver_sigma_dy.solve()
                     solver_omega.solve()
-
-            elif (not self.options.no_wave_flow):
-
-                for i_stage in range(n_stages):
-                    # advance granular landslide motion
-                    if couple_granular_and_wave_in_ssprk and self.options.flow_is_granular:
-                        if not self.options.lamda == 0.:
-                            self.h_2d_cg.project(self.fields.bathymetry_2d + self.fields.elev_2d)
-                            self.h_2d_ls.dat.data[:] = self.h_2d_cg.dat.data[:]
-
-                        # solve fluid pressure on slide
-                       # self.extract_bot_q.solve()
-                        self.fields.bathymetry_2d.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
-                        solver_pf.solve()
-                        self.grad_p_ls.dat.data[:] = self.grad_p.dat.data[:]
-
-                        solver_ls.solve()
-                        self.fields.solution_ls.assign(coeff[i_stage][0]*self.solution_ls_mid + coeff[i_stage][1]*self.solution_ls_tmp)
-
-                        if self.options.use_wetting_and_drying:
-                            limiter_start_time = 0.
-                            limiter_end_time = self.options.simulation_end_time - t_epsilon
-                            use_limiter = self.options.use_limiter_for_granular and self.simulation_time >= limiter_start_time and self.simulation_time <= limiter_end_time
-                            self.wd_modification_ls.apply(self.fields.solution_ls, self.options.wetting_and_drying_threshold, use_limiter)
-                        solver_div.solve()
-
-                        ind_wet_2d = np.where(h_2d_array[:] > 0)[0]
-                        if self.simulation_time >= 0.:
-                            self.fields.slide_source_2d.assign(0.)
-                            self.fields.slide_source_2d.dat.data[ind_wet_2d] = (self.fields.h_ls.dat.data[ind_wet_2d] 
-                                                                                 - self.solution_ls_old.sub(0).dat.data[ind_wet_2d])/self.dt/self.slope.dat.data.min()
-                        # copy slide source to 3d
-                        self.copy_slide_source_to_3d.solve()
-
-                        # update bathymetry
-                        self.fields.bathymetry_2d.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
-                        self.copy_bath_to_3d.solve()
-
-                    # 2d advance
-                    if self.options.solve_separate_elevation_gradient and self.options.update_free_surface:
-                        if i_stage == 1:
-                            self.uv_averager.solve() # uv_3d -> uv_dav_3d
-                            self.extract_surf_dav_uv.solve() # uv_dav_3d -> uv_2d
-                            self.fields.elev_2d.assign(self.elev_2d_old)
-                            self.copy_uv_to_uv_dav_3d.solve()
-                            self.uv_dav_3d_mid.assign(self.fields.uv_dav_3d)
-                            self.timestepper_operator_splitting.advance(self.simulation_time, update_forcings)
-                            if self.options.use_limiter_for_elevation:
-                                if self.limiter_h is not None:
-                                    self.limiter_h.apply(self.fields.elev_2d)
-                                if self.limiter_u is not None:
-                                    self.limiter_u.apply(self.fields.uv_2d)
-                            self.copy_elev_to_3d.solve()
-
-                    # 3d advance
-                    solver_sigma_dx.solve()
-                    solver_sigma_dy.solve()
-                    solver_omega.solve()
-
-                    solver_mom.solve()
-                    self.fields.uv_3d.assign(self.uv_3d_mid)
-                    if self.options.use_limiter_for_velocity:
-                        self.uv_limiter.apply(self.fields.uv_3d)
-
-                    # wetting and drying treatment
-                    if self.options.use_wetting_and_drying:
-                        ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
-                        self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
-
-                    if i_stage == 1 and self.options.solve_separate_elevation_gradient:
-                        self.fields.uv_3d.assign(0.5*(self.uv_3d_old + self.fields.uv_3d))
-                        # update 2d coupling, i.e. including the elevation gradient contribution
-                        if self.options.update_free_surface:
-                            self.copy_uv_to_uv_dav_3d.solve()
-                            self.fields.uv_3d.assign(self.fields.uv_3d - (self.uv_dav_3d_mid - self.fields.uv_dav_3d))
-
-                        # solve nh pressure
-                        solver_q.solve()
-                        # update velocity
-                        solver_u.solve()
-                        # wetting and drying treatment
-                        if self.options.use_wetting_and_drying:
-                            ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
-                            self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
-                        # update free surface elevation
-                        if self.options.update_free_surface:
-                            self.uv_averager.solve()
-                            self.extract_surf_dav_uv.solve()
-                            self.elev_2d_fs.assign(self.elev_2d_old)
-                            self.timestepper_free_surface_implicit.advance(self.simulation_time, update_forcings)
-                            self.fields.elev_2d.assign(self.elev_2d_fs)
-                            if self.options.use_limiter_for_elevation:
-                                if self.limiter_h is not None:
-                                    self.limiter_h.apply(self.fields.elev_2d)
-                            self.copy_elev_to_3d.solve()
-                            solver_sigma_dt.solve()
-
-                    if (not self.options.solve_separate_elevation_gradient):
-                        # solve nh pressure
-                        solver_q.solve()
-                        # update velocity
-                        solver_u.solve()
-                        # wetting and drying treatment
-                        if self.options.use_wetting_and_drying:
-                            ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
-                            self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
-                        if i_stage == 1:
-                            self.fields.uv_3d.assign(0.5*(self.uv_3d_old + self.fields.uv_3d))
-                        # update free surface elevation
-                        if self.options.update_free_surface:
-                            self.uv_averager.solve()
-                            self.extract_surf_dav_uv.solve()
-                            self.elev_2d_fs.assign(self.elev_2d_old)
-                            self.timestepper_free_surface_explicit.advance(self.simulation_time, update_forcings)
-                            self.fields.elev_2d.assign(self.elev_2d_fs)
-                            if self.options.use_limiter_for_elevation:
-                                if self.limiter_h is not None:
-                                    self.limiter_h.apply(self.fields.elev_2d)
-                            self.copy_elev_to_3d.solve()
-                            solver_sigma_dt.solve()
 
 
             # Move to next time step

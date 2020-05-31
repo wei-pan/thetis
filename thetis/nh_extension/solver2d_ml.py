@@ -242,8 +242,8 @@ class FlowSolver(FrozenClass):
             self.bathymetry_ls = Function(self.function_spaces.H_2d).project(self.fields.bathymetry_2d)
             self.fields.solution_ls = Function(self.function_spaces.V_2d)
             self.fields.uv_ls = self.fields.solution_ls.sub(0)
-            self.fields.elev_ls = self.fields.solution_ls.sub(0).sub(1)
-            self.fields.slide_source = Function(self.function_spaces.H_2d)
+            self.fields.elev_ls = self.fields.solution_ls.sub(1)
+            self.fields.slide_source_2d = Function(self.function_spaces.H_2d)
 
         # functions for multi-layer approach
         self.function_spaces.uvw_2d = VectorFunctionSpace(self.mesh2d, 'DG', self.options.polynomial_degree, dim=3)
@@ -348,7 +348,7 @@ class FlowSolver(FrozenClass):
             'uv': self.fields.solution_2d.sub(0),
             'uv_la': self.fields.uv_nh,
             'eta': self.fields.solution_2d.sub(1),
-            'sponge_damping_2d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_xstart, alpha = 10.),}
+            'sponge_damping_2d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_start, alpha=10.),}
         fields = self.field_dic
         self.set_time_step()
         if self.options.timestepper_type == 'SSPRK33':
@@ -590,7 +590,7 @@ class FlowSolver(FrozenClass):
                                  u=norm_u, cpu=cputime))
         sys.stdout.flush()
 
-    def set_sponge_damping(self, length, x_start, y_start = None, alpha = 10.):
+    def set_sponge_damping(self, length, x_start, y_start=None, alpha=10.):
         """
         Set damping terms to reduce the reflection on solid boundaries.
         """
@@ -767,7 +767,7 @@ class FlowSolver(FrozenClass):
                 fields['w_z_'+str(k)] = -fields['u_z_'+str(k)]*Dx(self.bathymetry_dg, 0) ######################### test here
 
                 if self.options.landslide is True:
-                    fields['w_z_'+str(k)] += -self.fields.slide_source # (self.bathymetry_dg - self.bathymetry_dg_old)/self.dt
+                    fields['w_z_'+str(k)] += -self.fields.slide_source_2d # (self.bathymetry_dg - self.bathymetry_dg_old)/self.dt
             elif k > 0 and k < n_layers:
                 fields['u_z_'+str(k)] = alpha[k]/(alpha[k-1]+alpha[k])*u_list[k-1] + alpha[k-1]/(alpha[k-1]+alpha[k])*u_list[k]
                 fields['w_z_'+str(k)] = 2.*w_list[k-1] - fields['w_z_'+str(k-1)]
@@ -900,7 +900,7 @@ class FlowSolver(FrozenClass):
 
                         # weak form of slide source term
                         if self.options.landslide:
-                            slide_source_term = -2.*self.fields.slide_source*q_test[k]*dx #TODO check if 2. is correct
+                            slide_source_term = -2.*self.fields.slide_source_2d*q_test[k]*dx #TODO check if 2. is correct
                             f += slide_source_term
                         f += div_hu_term + vert_vel_term - interface_term - w_bot_term
 
@@ -1016,7 +1016,7 @@ class FlowSolver(FrozenClass):
 
                         # weak form of slide source term
                         if self.options.landslide:
-                            slide_source_term = -2.*self.fields.slide_source*q_test[k]*dx #TODO check if 2. is correct
+                            slide_source_term = -2.*self.fields.slide_source_2d*q_test[k]*dx #TODO check if 2. is correct
                             f += slide_source_term
                         f += div_hu_term + vert_vel_term - interface_term# - w_bot_term
 
