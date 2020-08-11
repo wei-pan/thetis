@@ -5,6 +5,7 @@ from __future__ import absolute_import
 from .utility_nh import *
 from . import shallowwater_nh
 from . import fluid_slide
+from . import granular_cf
 from . import momentum_nh
 from . import tracer_nh
 from . import sediment_nh
@@ -12,7 +13,7 @@ from . import coupled_timeintegrator_nh
 from . import turbulence_nh
 from .. import timeintegrator
 from .. import rungekutta
-from . import limiter_nh as limiter
+from . import limiter_nh
 import time as time_mod
 from mpi4py import MPI
 from .. import exporter
@@ -82,7 +83,7 @@ class FlowSolver(FrozenClass):
     See the manual for more complex examples.
     """
     def __init__(self, mesh2d, bathymetry_2d, n_layers,
-                 options=None, extrude_options=None):
+                 options=None, extrude_options=None, mesh_ls=None):
         """
         :arg mesh2d: :class:`Mesh` object of the 2D mesh
         :arg bathymetry_2d: Bathymetry of the domain. Bathymetry stands for
@@ -99,10 +100,14 @@ class FlowSolver(FrozenClass):
         self.bathymetry_cg_2d = bathymetry_2d
 
         self.mesh2d = mesh2d
+        # independent landslide mesh for granular flow
+        self.mesh_ls = self.mesh2d
+        if mesh_ls is not None:
+            self.mesh_ls = mesh_ls
         """2D :class`Mesh`"""
         if extrude_options is None:
             extrude_options = {}
-        self.mesh = extrude_mesh_sigma(mesh2d, n_layers, bathymetry_2d, **extrude_options)
+        self.mesh = ExtrudedMesh(mesh2d, layers=n_layers, layer_height=1.0/n_layers)#extrude_mesh_sigma(mesh2d, n_layers, bathymetry_2d, **extrude_options)
         self.horizontal_domain_is_2d = self.mesh2d.geometric_dimension() == 2
         if self.horizontal_domain_is_2d:
             self.vert_ind = 2
@@ -119,6 +124,7 @@ class FlowSolver(FrozenClass):
         # add boundary length info
         bnd_len = compute_boundary_length(self.mesh2d)
         self.mesh2d.boundary_len = bnd_len
+        self.mesh_ls.boundary_len = bnd_len
         self.mesh.boundary_len = bnd_len
 
         # override default options
@@ -464,6 +470,12 @@ class FlowSolver(FrozenClass):
             self.function_spaces.H_bhead_2d = self.function_spaces.P1DG_2d
             self.function_spaces.U_int_pg = self.function_spaces.U
 
+        # function spaces for granular landslide
+        self.function_spaces.H_ls = get_functionspace(self.mesh_ls, 'DG', self.options.polynomial_degree)
+        self.function_spaces.U_ls = get_functionspace(self.mesh_ls, 'DG', self.options.polynomial_degree, vector=True)
+        self.function_spaces.V_ls = MixedFunctionSpace([self.function_spaces.H_ls, self.function_spaces.H_ls, self.function_spaces.H_ls])
+        self.function_spaces.P1_ls = get_functionspace(self.mesh_ls, 'CG', 1)
+
         self._isfrozen = True
 
     def create_fields(self):
@@ -513,6 +525,11 @@ class FlowSolver(FrozenClass):
         self.fields.z_coord_3d = Function(coord_fs)
         # z coordinate in the reference mesh (eta=0)
         self.fields.z_coord_ref_3d = Function(coord_fs)
+
+        # sigma coordinate
+        self.sigma_coord = Function(coord_fs).project(self.mesh.coordinates[2]) # WPan added.
+        self.z_coord_3d_old = Function(coord_fs)
+
         self.fields.uv_dav_3d = Function(self.function_spaces.U)
         self.fields.uv_dav_2d = Function(self.function_spaces.U_2d)
         self.fields.split_residual_2d = Function(self.function_spaces.U_2d)
@@ -563,13 +580,13 @@ class FlowSolver(FrozenClass):
         if self.options.use_smagorinsky_viscosity:
             self.fields.smag_visc_3d = Function(self.function_spaces.P1)
         if self.options.use_limiter_for_tracers and self.options.polynomial_degree > 0:
-            self.tracer_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.H)
+            self.tracer_limiter = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.H)
         else:
             self.tracer_limiter = None
         if (self.options.use_limiter_for_velocity
                 and self.options.polynomial_degree > 0
                 and self.options.element_family == 'dg-dg'):
-            self.uv_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.U)
+            self.uv_limiter = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.U)
         else:
             self.uv_limiter = None
         if self.options.use_turbulence:
@@ -640,10 +657,11 @@ class FlowSolver(FrozenClass):
         """
         self.bathymetry_dg_old = Function(self.function_spaces.H_2d)
         self.bathymetry_dg = Function(self.function_spaces.H_2d).project(self.bathymetry_cg_2d)
-        self.bathymetry_ls = Function(self.function_spaces.H_2d).project(self.bathymetry_cg_2d)
-        self.bathymetry_wd = Function(self.function_spaces.P1_2d).project(self.bathymetry_cg_2d) # for wetting-drying use of 3D, temporarily
+        self.bathymetry_3d_dg = Function(self.function_spaces.H)
+        self.bathymetry_init = Function(self.function_spaces.H_2d).assign(self.bathymetry_dg)
         self.elev_2d_old = Function(self.function_spaces.H_2d)
         self.elev_2d_mid = Function(self.function_spaces.H_2d)
+        self.elev_2d_tmp = Function(self.function_spaces.H_2d)
         self.elev_3d_old = Function(self.function_spaces.H)
         self.elev_3d_mid = Function(self.function_spaces.H)
 
@@ -689,21 +707,6 @@ class FlowSolver(FrozenClass):
         self.solution_2d_old = Function(self.function_spaces.V_2d)
         self.solution_2d_tmp = Function(self.function_spaces.V_2d)
 
-        self.fields.solution_ls = Function(self.function_spaces.V_2d)
-        self.solution_ls_old = Function(self.function_spaces.V_2d)
-        self.solution_ls_tmp = Function(self.function_spaces.V_2d)
-        # functions for landslide modelling
-        uv_ls, elev_ls = self.fields.solution_ls.split()
-        self.fields.uv_ls = uv_ls
-        self.fields.elev_ls = elev_ls
-        self.elev_ls_real = Function(self.function_spaces.H_2d)
-        self.fields.slide_source_2d = Function(self.function_spaces.H_2d)
-        self.fields.slide_source_3d = Function(self.function_spaces.H)
-
-        # new adds for rigid and granular landslides
-        self.fields.h_ls = Function(self.function_spaces.H_2d)
-        self.h_ls_old = Function(self.function_spaces.H_2d)
-
         for k in range(self.n_layers):
             setattr(self, 'uv_av_' + str(k+1), Function(self.function_spaces.U_2d))
             #self.__dict__['uv_av_' + str(k+1)] = Function(self.function_spaces.U_2d)
@@ -720,18 +723,7 @@ class FlowSolver(FrozenClass):
         self.function_spaces.q_mixed_n_layers = MixedFunctionSpace(list_fs)
         self.q_mixed_n_layers = Function(self.function_spaces.q_mixed_n_layers)
 
-        # sigma transformation
-        coord_fs = self.function_spaces.P1
-        self.sigma_coord = Function(coord_fs).project(self.mesh.coordinates[2])
-        self.z_in_sigma = Function(coord_fs)
-        self.z_in_sigma_old = Function(coord_fs)
-        self.bathymetry_3d_old = Function(self.function_spaces.H)
-        self.fields.sigma_dt = Function(coord_fs)
-        self.fields.sigma_dx = Function(coord_fs)
-        self.fields.sigma_dy = Function(coord_fs)
-        self.fields.omega = Function(coord_fs)
-        # self.fields.sigma_dx**2 + self.fields.sigma_dy**2 + self.fields.sigma_dz**2
-        self.sigma_dxyz = Function(coord_fs)
+        self.fields.omega = Function(FunctionSpace(self.mesh, 'DG', 1, vfamily='CG', vdegree=1))
 
         # IBM test, temporarily fail to implement
         coord_fs = VectorFunctionSpace(self.mesh, 'CG', 1, vfamily='CG', vdegree=1)
@@ -755,6 +747,43 @@ class FlowSolver(FrozenClass):
         if self.options.solve_sediment:
             self.fields.c_3d = Function(self.function_spaces.H)
 
+        # rigid slide
+        if self.options.slide_is_rigid:
+            self.fields.h_ls = Function(self.function_spaces.H_ls)
+            self.h_ls_old = Function(self.function_spaces.H_ls)
+        # fluid slide
+        if self.options.slide_is_viscous_fluid:
+            self.fields.solution_ls = Function(self.function_spaces.V_2d)
+            self.fields.uv_ls, self.fields.elev_ls = self.fields.solution_ls.split()
+            self.solution_ls_old = Function(self.function_spaces.V_2d)
+            self.solution_ls_tmp = Function(self.function_spaces.V_2d)
+        # granular flow
+        if self.options.flow_is_granular:
+            self.fields.solution_ls = Function(self.function_spaces.V_ls)
+            self.solution_ls_old = Function(self.function_spaces.V_ls)
+            self.solution_ls_mid = Function(self.function_spaces.V_ls)
+            self.solution_ls_tmp = Function(self.function_spaces.V_ls)
+            self.fields.h_ls, self.fields.hu_ls, self.fields.hv_ls = self.fields.solution_ls.split()
+            self.h_ls_old, self.hu_ls_old, self.hv_ls_old = self.solution_ls_old.split()
+            self.bathymetry_ls = Function(self.function_spaces.H_ls)
+            self.phi_i = Function(self.function_spaces.P1_ls).assign(self.options.phi_i)
+            self.phi_b = Function(self.function_spaces.P1_ls).assign(self.options.phi_b)
+            self.kap = Function(self.function_spaces.P1_ls)
+            self.uv_div_ls = Function(self.function_spaces.P1_ls)
+            self.strain_rate_ls = Function(self.function_spaces.P1_ls)
+            self.grad_p_ls = Function(self.function_spaces.U_ls)
+            self.grad_p = Function(self.function_spaces.U_2d)
+            self.slope = Function(self.function_spaces.H_ls).interpolate(self.options.bed_slope[2])
+            self.h_2d_ls = Function(self.function_spaces.P1_ls)
+            self.h_2d_cg = Function(self.function_spaces.P1_2d)
+
+        self.landslide = self.options.slide_is_rigid or self.options.slide_is_viscous_fluid or self.options.flow_is_granular
+        self.fields.slide_source_2d = Function(self.function_spaces.H_2d)
+        self.fields.slide_source_3d = Function(self.function_spaces.H)
+
+
+
+
     def create_equations(self):
         """
         Creates all dynamic equations and time integrators
@@ -769,10 +798,11 @@ class FlowSolver(FrozenClass):
             filehandler.setFormatter(logging.logging.Formatter('%(message)s'))
             output_logger.addHandler(filehandler)
 
-        self.eq_sw = shallowwater_nh.ModeSplit2DEquations(
+        self.eq_operator_split = shallowwater_nh.ModeSplit2DEquations(
             self.fields.solution_2d.function_space(),
             self.bathymetry_dg,
             self.options)
+        self.eq_operator_split.bnd_functions = self.bnd_functions['shallow_water']
 
         self.eq_sw_nh = shallowwater_nh.ShallowWaterEquations(
             self.fields.solution_2d.function_space(),
@@ -786,6 +816,7 @@ class FlowSolver(FrozenClass):
             self.bathymetry_dg,
             self.options)
 
+        # only elevation gradient term
         self.eq_mom_2d = shallowwater_nh.MomentumEquation2D(
             TestFunction(self.function_spaces.U_2d),
             self.function_spaces.U_2d,
@@ -800,12 +831,33 @@ class FlowSolver(FrozenClass):
             self.bathymetry_dg,
             self.options)
 
+        # treat landslide as a viscous fluid
         if self.options.slide_is_viscous_fluid:
-            self.eq_ls = fluid_slide.LiquidSlideEquations(
+            self.eq_ls = fluid_slide.FluidSlideEquations(
             self.fields.solution_ls.function_space(),
             self.bathymetry_ls,
             self.options)
+
+        if self.options.flow_is_granular:
+            self.eq_ls = granular_cf.GranularEquations(
+                self.fields.solution_ls.function_space(),
+                self.bathymetry_ls,
+                self.options
+            )
             self.eq_ls.bnd_functions = self.bnd_functions['landslide_motion']
+
+        if self.options.use_wetting_and_drying:
+            self.wd_modification = wetting_and_drying_modification(self.function_spaces.H_2d)
+            self.wd_modification_ls = wetting_and_drying_modification(self.function_spaces.H_ls)
+
+        self.copy_bath_to_3d = ExpandFunctionTo3d(self.bathymetry_dg, self.bathymetry_3d_dg)
+        self.copy_bath_to_3d.solve()
+        # landslide
+        if self.landslide:
+            self.copy_slide_source_to_3d = ExpandFunctionTo3d(self.fields.slide_source_2d, self.fields.slide_source_3d)
+        self.limiter_h = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.H_2d)
+        self.limiter_u = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.U_2d)
+
 
         ##################################
         # sediment transport equation
@@ -874,7 +926,6 @@ class FlowSolver(FrozenClass):
                                                              h_elem_size=self.fields.h_elem_size_3d,
                                                              use_lax_friedrichs=self.options.use_lax_friedrichs_tracer)
 
-        self.eq_sw.bnd_functions = self.bnd_functions['shallow_water']
         self.eq_momentum.bnd_functions = self.bnd_functions['momentum']
         if self.options.solve_sediment:
             self.eq_sediment.bnd_functions = self.bnd_functions['sediment']
@@ -938,8 +989,8 @@ class FlowSolver(FrozenClass):
             self.exporters['hdf5'] = e
 
         # ----- Operators
-        #tot_uv_3d = self.fields.uv_3d + self.fields.uv_dav_3d    <<---------- #################################################
-        tot_uv_3d = self.fields.uv_3d # modified for operator-splitting method used in Telemac3D
+        #tot_uv_3d = self.fields.uv_3d + self.fields.uv_dav_3d
+        tot_uv_3d = self.fields.uv_3d # modified for operator-splitting method used # TODO note here
         self.w_solver = VerticalVelocitySolver(self.fields.w_3d,
                                                tot_uv_3d,
                                                self.fields.bathymetry_3d,
@@ -1053,7 +1104,8 @@ class FlowSolver(FrozenClass):
 
     def assign_initial_conditions(self, elev=None, salt=None, temp=None,
                                   uv_2d=None, uv_3d=None, tke=None, psi=None,
-                                  elev_slide=None, uv_slide=None, sedi=None, h_ls=None):
+                                  elev_slide=None, uv_slide=None, 
+                                  h_ls=None, uv_ls=None, sedi=None):
         """
         Assigns initial conditions
 
@@ -1081,15 +1133,19 @@ class FlowSolver(FrozenClass):
             if uv_3d is None:
                 ExpandFunctionTo3d(self.fields.uv_2d, self.fields.uv_3d,
                                    elem_height=self.fields.v_elem_size_3d).solve()
-        # landslide
-        if self.options.landslide:
-            uv_ls, elev_ls = self.fields.solution_ls.split()
-            if elev_slide is not None:
-                elev_ls.project(elev_slide)
-            if uv_slide is not None:
-                uv_ls.project(uv_slide)
+        # fluid slide
+        if self.options.slide_is_viscous_fluid:
+            if elev_ls is not None:
+                self.fields.solution_ls.sub(1).project(elev_ls)
+            if uv_ls is not None:
+                self.fields.solution_ls.sub(0).project(uv_ls)
+        # granular slide
+        if self.options.flow_is_granular:
             if h_ls is not None:
                 self.fields.h_ls.project(h_ls)
+            if uv_ls is not None:
+                self.fields.solution_ls.sub(1).project(self.fields.h_ls*uv_ls[0])
+                self.fields.solution_ls.sub(2).project(self.fields.h_ls*uv_ls[1])
 
         if sedi is not None and self.options.solve_sediment:
             self.fields.c_3d.project(sedi)
@@ -1264,44 +1320,7 @@ class FlowSolver(FrozenClass):
         boundary_markers = q.function_space().mesh().exterior_facets.unique_markers
         horizontal_is_dg = element_continuity(q.function_space().ufl_element()).horizontal in ['dg', 'hdiv']
 
-        if multi_layers:
-            # nabla^2-term is integrated by parts
-            laplace_term = -inner(grad(q_test), grad(q)) * dx
-            forcing = -(Dx(C*q_test, 0) * uv_3d[0] + Dx(C*q_test, 1) * uv_3d[1] + Dx(C*q_test, 2) * w_3d[2]) * dx 
-            #C*dot(q_test, div(uv_3d) + Dx(w_3d[2], 2)) * dx
-            F = laplace_term - forcing
-            pressure_correction = False#True
-            if pressure_correction:
-                F += (-inner(Dx(q_test, 2), Dx(self.fields.q_3d, 2))*dx)
-
-            # boundary conditions: to refer to the top and bottom use "top" and "bottom"
-            # for other boundaries use the normal numbers (ids) from the horizontal mesh
-            # (UnitSquareMesh automatically defines 1,2,3, and 4)
-            bc_top = DirichletBC(q.function_space(), 0., "top")
-            bcs = [bc_top]
-            for bnd_marker in boundary_markers:
-                func = self.bnd_functions['shallow_water'].get(bnd_marker)
-                if func is not None: #TODO set more general and accurate conditional statement
-                    bc = DirichletBC(q.function_space(), 0., int(bnd_marker))
-                    bcs.append(bc)
-
-            # you can add Dirichlet bcs to other boundaries if needed
-            # any boundary that is not specified gets the natural zero Neumann bc
-            #solve(F==0, q, bcs=bcs)
-
-            prob = NonlinearVariationalProblem(F, q, bcs=bcs)
-            solver = NonlinearVariationalSolver(prob,
-                                            solver_parameters={'snes_type': 'ksponly',#'newtonls''ksponly'
-                                                               'ksp_type': 'gmres',#'gmres''preonly'
-                                                               'pc_type': 'ilu',},#'ilu''gamg'
-                                            bcs=bcs,
-                                            options_prefix='poisson_solver')
-
-            solver.solve()
-
-            return q
-
-        else:
+        if not multi_layers:
             # weak forms
             f = (-dot(grad(q), grad(q_test)) + B*q*q_test)*dx - C*q_test*dx - q*div(A*q_test)*dx
             if horizontal_is_dg:
@@ -1327,77 +1346,11 @@ class FlowSolver(FrozenClass):
 
             return q
 
-    def calculate_external_pressure_gradient(self, pressure='elevation'):
-        """
-        Calculate three-dimensional external pressure gradient.
-        """
-        if pressure == 'elevation':
-            eta = self.fields.elev_3d
-        else:
-            eta = self.fields.q_3d
-        trial = TrialFunction(self.function_spaces.U_int_pg)
-        test = TestFunction(self.function_spaces.U_int_pg)
-        p, q = self.function_spaces.U_int_pg.ufl_element().degree()
-        quad_degree = (2*p + 1, 2*q + 1)
-        f = 0
-        if element_continuity(eta.function_space().ufl_element()).horizontal == 'dg':
-            div_test = (Dx(test[0], 0) + Dx(test[1], 1))
-            f += -g_grav*eta*div_test*dx
-            head_star = avg(eta)
-            jump_n_dot_test = (jump(test[0], self.normal[0]) +
-                               jump(test[1], self.normal[1]))
-            f += g_grav*head_star*jump_n_dot_test*(dS_v + dS_h)
-            n_dot_test = (self.normal[0]*test[0] +
-                          self.normal[1]*test[1])
-            f += g_grav*eta*n_dot_test*(ds_bottom + ds_surf)
-            for bnd_marker in self.boundary_markers:
-                funcs = self.bnd_functions['shallow_water'].get(bnd_marker)
-                ds_bnd = ds_v(int(bnd_marker), degree=quad_degree)
-                if eta is not None:
-                    if funcs is not None and 'elev3dxx' in funcs:
-                        r_ext = funcs['elev3d']
-                        head_ext = r_ext
-                        head_in = eta
-                        head_star = 0.5*(head_ext + head_in)
-                    else:
-                        head_star = eta
-                    f += g_grav*head_star*n_dot_test*ds_bnd
-        else:
-            grad_head_dot_test = (Dx(eta, 0)*test[0] +
-                                  Dx(eta, 1)*test[1])
-            f += g_grav * grad_head_dot_test * dx
-
-        a = inner(trial, test) * dx
-        if pressure == 'elevation':
-            l = f
-        else:
-            if element_continuity(eta.function_space().ufl_element()).horizontal == 'dg':
-                f += -g_grav*eta*Dx(test[2], 2)*dx + avg(eta)*jump(test[2], self.normal[2])*(dS_h)
-                f += g_grav*eta*test[2]*self.normal[2]*(ds_bottom + ds_surf)
-                for bnd_marker in self.boundary_markers:
-                    funcs = self.bnd_functions['shallow_water'].get(bnd_marker)
-                    ds_bnd = ds_v(int(bnd_marker), degree=quad_degree)
-                    f += g_grav*eta*test[2]*self.normal[2]*ds_bnd
-            else:
-                f += g_grav*Dx(eta, 2)*test[2]*dx
-            a = g_grav*inner(trial, test) * dx
-            l = f
-        #####
-        #a = inner(trial, test) * dx
-        #l = g_grav*(Dx(eta, 0)*test[0] + Dx(eta, 1)*test[1]) * dx
-        #l = dot(grad(eta), test)*dx
-        #solve(a == l, self.fields.ext_pg_3d)
-        #####
-        prob = LinearVariationalProblem(a, l, self.fields.ext_pg_3d)
-        lin_solver = LinearVariationalSolver(prob, solver_parameters= \
-                     self.options.timestepper_options.solver_parameters_momentum_explicit)
-
-        lin_solver.solve()
-
-    def set_sponge_damping(self, length, x_start, y_start=None, alpha=10., sponge_is_2d=True):
+    def set_sponge_damping(self, length, sponge_start_point, alpha=10., sponge_is_2d=True):
         """
         Set damping terms to reduce the reflection on solid boundaries.
         """
+        pi = 4*np.arctan(1.)
         if length == [0., 0.]:
             return None
         if sponge_is_2d:
@@ -1406,47 +1359,34 @@ class FlowSolver(FrozenClass):
             damping_coeff = Function(self.function_spaces.P1)
         damp_vector = damping_coeff.dat.data[:]
         mesh = damping_coeff.ufl_domain()
-        if (not self.horizontal_domain_is_2d) and sponge_is_2d:
-            xvector = mesh.coordinates.dat.data[:]
-        else:
-            xvector = mesh.coordinates.dat.data[:, 0]
-
-        if mesh.coordinates.sub(0).dat.data.max() <= x_start[0] + length[0]:
-            length[0] = xvector.max() - x_start[0]
-            #if length[0] < 0:
-                #print('Start point of the first sponge layer is out of computational domain!')
-                #raise ValueError('Start point of the first sponge layer is out of computational domain!')
-        if mesh.coordinates.sub(1).dat.data.max() <= x_start[1] + length[1]:
-            length[1] = xvector.max() - x_start[1]
-            #if length[1] < 0:
-                #print('Start point of the second sponge layer is out of computational domain!')
-                #raise ValueError('Start point of the second sponge layer is out of computational domain!')
-
+        xvector = mesh.coordinates.dat.data[:, 0]
+        yvector = mesh.coordinates.dat.data[:, 1]
         assert xvector.shape[0] == damp_vector.shape[0]
-        for i, xy in enumerate(xvector):
-            pi = 4*np.arctan(1.)
-            x = (xy - x_start[0])/length[0]
-            if y_start is not None:
-                x = (xy[1] - y_start)/length[0]
-            if x > 0 and x < 0.5:
-                damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
-            elif x > 0.5 and x < 1.:
-                damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
-            else:
-                damp_vector[i] = 0.
-        if length[1] == 0.:
-            return damping_coeff
-        for i, xy in enumerate(xvector):
-            pi = 4*np.arctan(1.)
-            x = (xy - x_start[1])/length[1]
-            if y_start is not None:
-                x = (xy[1] - y_start)/length[1]
-            if x > 0 and x < 0.5:
-                damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
-            elif x > 0.5 and x < 1.:
-                damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
-            else:
-                damp_vector[i] = 0.
+        assert yvector.shape[0] == damp_vector.shape[0]
+        if xvector.max() <= sponge_start_point[0] + length[0]:
+            length[0] = xvector.max() - sponge_start_point[0]
+        if yvector.max() <= sponge_start_point[1] + length[1]:
+            length[1] = yvector.max() - sponge_start_point[1]
+
+        if length[0] > 0.:
+            for i, x in enumerate(xvector):
+                x = (x - sponge_start_point[0])/length[0]
+                if x > 0 and x < 0.5:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
+                elif x > 0.5 and x < 1.:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
+                else:
+                    damp_vector[i] = 0.
+        if length[1] > 0.:
+            for i, y in enumerate(yvector):
+                x = (y - sponge_start_point[1])/length[1]
+                if x > 0 and x < 0.5:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
+                elif x > 0.5 and x < 1.:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
+                else:
+                    damp_vector[i] = 0.
+
         return damping_coeff
 
     def set_vertical_2d(self):
@@ -1459,10 +1399,11 @@ class FlowSolver(FrozenClass):
             self.uv_2d_dg.sub(1).assign(0.)
             uv_2d.project(self.uv_2d_dg)
             # landslide
-            uv_ls, elev_ls = self.fields.solution_ls.split()
-            self.uv_2d_dg.project(uv_ls)
-            self.uv_2d_dg.sub(1).assign(0.)
-            uv_ls.project(self.uv_2d_dg)
+            if self.options.slide_is_viscous_fluid:
+                uv_ls, elev_ls = self.fields.solution_ls.split()
+                self.uv_2d_dg.project(uv_ls)
+                self.uv_2d_dg.sub(1).assign(0.)
+                uv_ls.project(self.uv_2d_dg)
 
     def slide_shape(self, simulation_time):
         """
@@ -1523,185 +1464,6 @@ class FlowSolver(FrozenClass):
                    hs_vector[i] = 0.
 
         return hs
-
-    def SlopeModification(self, solution): # WPan, 2017-05-05
-        """
-        Creates slope modification for the prevention of non negative flows in some verticies of cells. This is from Ern et al (2011)
-        """
-        uv_2d, elev_2d = solution.split()
-        if self.options.element_family == 'rt-dg':
-            self.uv_2d_dg.project(uv_2d)
-            tmp_proj_func = self.uv_2d_dg
-        else:
-            tmp_proj_func = uv_2d
-
-        fs_P0 = FunctionSpace(self.mesh2d, 'DG', 0)
-        fs_P1 = FunctionSpace(self.mesh2d, 'DG', 1)
-        fs_tmp = self.function_spaces.H_2d
-
-        H = Function(fs_tmp).assign(elev_2d + self.bathymetry_dg)
-        H_P1 = Function(fs_P1).project(elev_2d + self.bathymetry_dg)
-        u = Function(fs_tmp).assign(tmp_proj_func.sub(0)) 
-        v = Function(fs_tmp).assign(tmp_proj_func.sub(1))    
-
-        func_eta_tmp = Function(fs_tmp)
-        func_u_tmp = Function(fs_tmp)
-        func_v_tmp = Function(fs_tmp)
-        # calculate cell average
-        limiter_tmp = limiter.VertexBasedP1DGLimiter(fs_P1)
-        limiter_tmp._update_centroids(H_P1)
-        H_cell_avg = Function(fs_P0).project(limiter_tmp.centroids)
-
-
-        # add error if p>1 - in future make an option where we can project to p=1 from p>1
-        if self.function_spaces.V_2d.ufl_element().degree() != 1:
-            pass#raise ValueError('Slope Modification technique cannot be used with DGp, p > 1')
-
-        slope_modification_2d_kernel = """ 
-        const double E=%(epsilon)s;
-        double havg = 0;
-        double theta = 1.0;
-        int a=0, n1, n2, n3, a1=0, a3=0, flag1, flag2, flag3, deltau, deltav, npos;
-        #define STEP(X) (((X) <= 0) ? 0 : 1)
-        for(int i = 0; i < vert_h_cell.dofs; i++){
-        //    havg += vert_h_cell[i][0];
-            havg += h_cell_avg[0][0];
-        }
-        havg = havg/vert_h_cell.dofs;
-        for(int i = 0; i < new_vert_h_cell.dofs; i++){
-            if (vert_h_cell[i][0] > E){
-                a += 1;
-            }
-        }
-        if (a == new_vert_h_cell.dofs){
-            for(int i = 0; i < new_vert_h_cell.dofs; i++){
-                new_vert_h_cell[i][0] = vert_h_cell[i][0];
-            }
-        }
-        if (havg <= E){
-            for(int i = 0; i < new_vert_h_cell.dofs; i++){
-                new_vert_h_cell[i][0] = E;
-            }
-        }
-        if (havg > E){
-          
-            if (a<new_vert_h_cell.dofs){
-                for(int i=1;i<new_vert_h_cell.dofs;i++){
-                    if (vert_h_cell[0][0]>=vert_h_cell[i][0]){
-                        a1=a1+1;
-                    }
-                }
-                for(int i=0;i<new_vert_h_cell.dofs-1;i++){
-                    if (vert_h_cell[2][0]>=vert_h_cell[i][0]){
-                        a3=a3+1;
-                    }
-                }
-                if (a1==2){
-                    n3=0;
-                    if (a3==2){
-                        n2=2;
-                        n1=1;
-                    }
-                    if (a3==1){
-                        n2=2;
-                        n1=1;
-                    }
-                    if (a3==0){
-                        n1=2;
-                        n2=1;
-                    }
-                }
-                if (a1==0){
-                    n1=0;
-                    if (a3==2){
-                        n3=2;
-                        n2=1;
-                    }
-                    if (a3==1){
-                        n2=2;
-                        n3=1;
-                    }
-                    if (a3==0){
-                        n2=2;
-                        n3=1;
-                    }
-                }
-                if (a1==1){
-                    n2=0;
-                    if (a3==0){
-                        n3=1;
-                        n1=2;
-                    }
-                    if (a3==2){
-                        n3=2;
-                        n1=1;
-                    }
-                    if (a3==1){
-                        if (vert_h_cell[0][0]>=vert_h_cell[2][0]){
-                            n3=1;
-                            n1=2;
-                        }
-                        if (vert_h_cell[0][0]<vert_h_cell[2][0]){
-                            n3=2;
-                            n1=1;
-                        }
-                    }
-                }
-                new_vert_h_cell[n1][0]=E;
-                new_vert_h_cell[n2][0]=fmax(E,vert_h_cell[n2][0]-(new_vert_h_cell[n1][0]-vert_h_cell[n1][0])/2.0);
-                new_vert_h_cell[n3][0]=vert_h_cell[n3][0]-(new_vert_h_cell[n1][0]-vert_h_cell[n1][0])-(new_vert_h_cell[n2][0]-vert_h_cell[n2][0]);
-            }
-        }
-
-        for(int i = 0; i < new_vert_h_cell.dofs; i++){
-            if  (new_vert_h_cell[i][0] <= E){
-                new_vert_h_cell[i][0] = E;
-            }
-        }
-
-        flag1 = STEP(new_vert_h_cell[0][0] - (E + 1E-7));
-        flag2 = STEP(new_vert_h_cell[1][0] - (E + 1E-7));
-        flag3 = STEP(new_vert_h_cell[2][0] - (E + 1E-7));
-        npos = flag1 + flag2 + flag3;
-        deltau = (vert_u_cell[0][0]*vert_h_cell[0][0]*(1 - flag1)) + (vert_u_cell[1][0]*vert_h_cell[1][0]*(1 - flag2)) + (vert_u_cell[2][0]*vert_h_cell[2][0]*(1 - flag3));
-        deltav = (vert_v_cell[0][0]*vert_h_cell[0][0]*(1 - flag1)) + (vert_v_cell[1][0]*vert_h_cell[1][0]*(1 - flag2)) + (vert_v_cell[2][0]*vert_h_cell[2][0]*(1 - flag3));
-        if (npos > 0){
-            new_vert_u_cell[0][0] = flag1*(vert_u_cell[0][0]*vert_h_cell[0][0] + (deltau/npos))/new_vert_h_cell[0][0];
-            new_vert_u_cell[1][0] = flag2*(vert_u_cell[1][0]*vert_h_cell[1][0] + (deltau/npos))/new_vert_h_cell[1][0];
-            new_vert_u_cell[2][0] = flag3*(vert_u_cell[2][0]*vert_h_cell[2][0] + (deltau/npos))/new_vert_h_cell[2][0];
-            new_vert_v_cell[0][0] = flag1*(vert_v_cell[0][0]*vert_h_cell[0][0] + (deltav/npos))/new_vert_h_cell[0][0];
-            new_vert_v_cell[1][0] = flag2*(vert_v_cell[1][0]*vert_h_cell[1][0] + (deltav/npos))/new_vert_h_cell[1][0];
-            new_vert_v_cell[2][0] = flag3*(vert_v_cell[2][0]*vert_h_cell[2][0] + (deltav/npos))/new_vert_h_cell[2][0];
-        }
-        if (npos == 0){
-            new_vert_u_cell[0][0] = 0;
-            new_vert_u_cell[1][0] = 0;
-            new_vert_u_cell[2][0] = 0;
-            new_vert_v_cell[0][0] = 0;
-            new_vert_v_cell[1][0] = 0;
-            new_vert_v_cell[2][0] = 0;
-        }
-        """ % {"epsilon": self.options.wetting_and_drying_threshold}
-
-        args = {
-                "new_vert_v_cell": (func_v_tmp, RW),
-                "new_vert_u_cell": (func_u_tmp, RW),
-                "new_vert_h_cell": (func_eta_tmp, RW),
-                "h_cell_avg": (H_cell_avg, READ),
-                "vert_h_cell": (H_P1, READ),
-                "vert_u_cell": (u, READ),
-                "vert_v_cell": (v, READ)
-               }
-
-        par_loop(slope_modification_2d_kernel, dx, args)
-
-        tmp_proj_func.sub(0).assign(func_u_tmp)
-        tmp_proj_func.sub(1).assign(func_v_tmp)
-
-        uv_2d.project(tmp_proj_func)
-        elev_2d.assign(func_eta_tmp - self.bathymetry_dg)
-
-        return solution
 
     def iterate(self, update_forcings=None, update_forcings3d=None,
                 export_func=None):
@@ -1783,11 +1545,14 @@ class FlowSolver(FrozenClass):
         uv_2d, elev_2d = self.fields.solution_2d.split()
         uta_old, eta_old = split(self.solution_2d_old) # note: not '.split()'
         uta, eta = split(self.fields.solution_2d)
-        # functions associated with landslide
-        uv_ls_old, elev_ls_old = self.solution_ls_old.split()
-        uv_ls, elev_ls = self.fields.solution_ls.split()
-        uta_ls_old, eta_ls_old = split(self.solution_ls_old) # note: not '.split()'
-        uta_ls, eta_ls = split(self.fields.solution_ls)
+
+        # viscous fluid landslide
+        if self.options.slide_is_viscous_fluid:
+            uv_ls_old, elev_ls_old = self.solution_ls_old.split()
+            uv_ls, elev_ls = self.fields.solution_ls.split()
+            uta_ls_old, eta_ls_old = split(self.solution_ls_old) # note: not '.split()'
+            uta_ls, eta_ls = split(self.fields.solution_ls)
+
         # trial and test functions used to update
         uv_tri = TrialFunction(self.function_spaces.U_2d)
         uv_test = TestFunction(self.function_spaces.U_2d)
@@ -1803,6 +1568,20 @@ class FlowSolver(FrozenClass):
         tri_h_3d = TrialFunction(self.function_spaces.H)
         test_h_3d = TestFunction(self.function_spaces.H)
 
+        # update sigma mesh
+        h_3d = self.fields.elev_3d + self.bathymetry_3d_dg
+        alpha = self.options.depth_wd_interface
+        if self.options.use_wetting_and_drying:
+            h_total = 2 * alpha**2 / (2 * alpha + abs(h_3d)) + 0.5 * (abs(h_3d) + h_3d)
+        else:
+            h_total = h_3d
+        z_in_sigma = self.sigma_coord*h_total + ( - 1.)*self.bathymetry_3d_dg
+        self.fields.z_coord_3d.project(z_in_sigma)
+        self.mesh.coordinates.dat.data[:, 2] = self.fields.z_coord_3d.dat.data[:]
+        self.fields.z_coord_ref_3d.assign(self.fields.z_coord_3d)
+        self.mesh_updater.update_elem_height()
+        self.mesh.clear_spatial_index()
+
         # initial export
         self.print_state(0.0)
         if self.export_initial_state:
@@ -1815,61 +1594,7 @@ class FlowSolver(FrozenClass):
         if self.options.set_vertical_2d: # True for 1D case
             self.set_vertical_2d()
 
-        while self.simulation_time <= self.options.simulation_end_time - t_epsilon:
-            # Original mode-splitting method
-            #self.timestepper.advance(self.simulation_time,
-            #                         update_forcings, update_forcings3d)
-            self.uv_3d_old.assign(self.fields.uv_3d)
-            self.w_3d_old.assign(self.fields.w_3d)
-            self.uv_2d_old.assign(self.fields.uv_2d)
-            self.elev_3d_old.assign(self.fields.elev_3d)
-            self.elev_2d_old.assign(self.fields.elev_2d)
-            self.elev_2d_mid.assign(self.fields.elev_2d)
-            self.q_2d_old.assign(self.fields.q_2d)
-            self.solution_2d_old.assign(self.fields.solution_2d)
-            self.solution_ls_old.assign(self.fields.solution_ls)
-            self.bathymetry_dg_old.assign(self.bathymetry_dg)
-
-            if self.options.landslide:
-                self.h_ls_old.assign(self.fields.h_ls)
-                # update landslide motion source
-                if update_forcings is not None:
-                    update_forcings(self.simulation_time + self.dt) # update h_ls
-                    self.fields.slide_source_2d.assign((self.fields.h_ls - self.h_ls_old)/self.dt)
-                    self.bathymetry_dg.project(self.fields.bathymetry_2d - self.fields.h_ls)
-
-            if self.options.thin_film: 
-                # this thin-film wetting-drying scheme relies on the high resolution at wetting-drying front
-                # has been benchmarked by Thacker test, but needs further work by orther tests, WPan
-                H = self.bathymetry_dg.dat.data + elev_2d.dat.data
-                visu_space = exporter.get_visu_space(uv_2d.function_space())
-                tmp_proj_func = visu_space.get_work_function()
-                tmp_proj_func.project(uv_2d)
-                visu_space.restore_work_function(tmp_proj_func)
-                UV = tmp_proj_func.dat.data
-                ind = np.where(H[:] <= self.options.wetting_and_drying_threshold)[0]
-                H[ind] = self.options.wetting_and_drying_threshold
-                elev_2d.dat.data[ind] = (H - self.bathymetry_dg.dat.data)[ind] # note not appllies to landslide
-                #UV[ind] = [0., 0.]
-                #uv = conditional((elev_2d + self.fields.bathymetry_2d) <= self.options.wetting_and_drying_threshold, zero(tmp_proj_func.ufl_shape), tmp_proj_func)
-                #if self.options.element_family == 'rt-dg':
-                #    uv_2d.project(tmp_proj_func) 
-                #else:
-                #    uv_2d.assign(tmp_proj_func) 
-                #self.fields.solution_2d = self.SlopeLimiter(self.fields.solution_2d)
-                self.fields.solution_2d = self.SlopeModification(self.fields.solution_2d)
-            else:
-                H_min = (self.bathymetry_dg.dat.data + self.fields.elev_2d.dat.data).min()
-                if self.options.landslide and (not self.options.slide_is_rigid):
-                    if self.options.flow_is_granular:
-                        self.bathymetry_ls.assign(0.) # note different reference frame
-                    if self.simulation_time <= self.options.t_landslide:
-                        H_min = (self.bathymetry_ls.dat.data + self.fields.elev_ls.dat.data).min()
-                H = self.bathymetry_dg + self.fields.elev_2d
-                self.bathymetry_wd.project(self.bathymetry_dg + 2*self.options.depth_wd_interface**2/(2*self.options.depth_wd_interface + abs(H)) + 0.5 * (abs(H) - H))
-                ExpandFunctionTo3d(self.bathymetry_wd, self.fields.bathymetry_3d).solve()
-                #print_output('alpha = {:}'.format(self.options.depth_wd_interface.dat.data))
-
+        if True:
             # ----- Self-defined time integrator for layer-integrated NH solver
             fields_2d = {
                     'linear_drag_coefficient': self.options.linear_drag_coefficient,
@@ -1900,110 +1625,231 @@ class FlowSolver(FrozenClass):
             fields_layer_integrated = {'uv_delta_for_depth_integrated': self.fields.uv_delta}
             fields_layer_difference = {'uv_2d_for_layer_difference': self.fields.uv_2d}
 
-            if self.simulation_time <= t_epsilon:
-                # timestepper for operator splitting in 3D NH solver
-                timestepper_operator_splitting = timeintegrator.CrankNicolson(self.eq_sw, self.fields.solution_2d,
+            # timestepper for operator splitting in 3D NH solver
+            timestepper_operator_splitting = timeintegrator.CrankNicolson(self.eq_operator_split, self.fields.solution_2d,
                                                               fields_2d, self.dt, bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.5)
-                timestepper_operator_splitting_explicit = timeintegrator.CrankNicolson(self.eq_sw, self.fields.solution_2d,
+            timestepper_operator_splitting_explicit = timeintegrator.CrankNicolson(self.eq_operator_split, self.fields.solution_2d,
                                                               fields_2d, self.dt, bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.)
-                timestepper_operator_splitting_implicit = timeintegrator.CrankNicolson(self.eq_sw, self.fields.solution_2d,
+            timestepper_operator_splitting_implicit = timeintegrator.CrankNicolson(self.eq_operator_split, self.fields.solution_2d,
                                                               fields_2d, self.dt, bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=1.0)
-                # timestepper for depth-integrated NH solver
-                timestepper_depth_integrated = timeintegrator.CrankNicolson(self.eq_sw_nh, self.fields.solution_2d,
+            # timestepper for depth-integrated NH solver
+            timestepper_depth_integrated = timeintegrator.CrankNicolson(self.eq_sw_nh, self.fields.solution_2d,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.5)
-                # timestepper for two-layer NH solvers
-                fields_layer_integrated.update(fields_2d)
-                timestepper_layer_integrated = timeintegrator.CrankNicolson(self.eq_sw_nh, self.fields.solution_2d,
+            # timestepper for two-layer NH solvers
+            fields_layer_integrated.update(fields_2d)
+            timestepper_layer_integrated = timeintegrator.CrankNicolson(self.eq_sw_nh, self.fields.solution_2d,
                                                               fields_layer_integrated, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=self.options.timestepper_options.solver_parameters_2d_swe,
                                                               semi_implicit=False,
                                                               theta=0.5)
-                fields_layer_difference.update(fields_2d)
-                timestepper_layer_difference = timeintegrator.CrankNicolson(self.eq_sw_mom, self.fields.uv_delta,
+            fields_layer_difference.update(fields_2d)
+            timestepper_layer_difference = timeintegrator.CrankNicolson(self.eq_sw_mom, self.fields.uv_delta,
                                                               fields_layer_difference, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               solver_parameters=self.options.timestepper_options.solver_parameters_momentum_implicit,
                                                               semi_implicit=False,
                                                               theta=0.5)
-                # timestepper for free surface equation
-                timestepper_free_surface = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
+            # timestepper for free surface equation
+            timestepper_free_surface = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               # solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.5)
-                timestepper_free_surface_explicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
+            timestepper_free_surface_explicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               # solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.)
-                timestepper_free_surface_implicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
+            timestepper_free_surface_implicit = timeintegrator.CrankNicolson(self.eq_free_surface, self.elev_2d_mid,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               # solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=1.0)
-                # timestepper for only elevation gradient term
-                timestepper_mom_2d = timeintegrator.CrankNicolson(self.eq_mom_2d, self.uv_2d_mid,
+            # timestepper for only elevation gradient term
+            timestepper_mom_2d = timeintegrator.CrankNicolson(self.eq_mom_2d, self.uv_2d_mid,
                                                               fields_2d, self.dt,
                                                               bnd_conditions=self.bnd_functions['shallow_water'],
                                                               # solver_parameters=solver_parameters,
                                                               semi_implicit=False,
                                                               theta=0.)
-                # timestepper for granular flow
-                if self.options.landslide and self.options.flow_is_granular:
-                    timestepper_granular_flow = timeintegrator.CrankNicolson(self.eq_ls, self.fields.solution_ls,
-                                                              fields_2d, self.dt,
-                                                              bnd_conditions=self.bnd_functions['landslide_motion'],
-                                                              solver_parameters=solver_parameters,
-                                                              semi_implicit=False,
-                                                              theta=0.5)
-                    timestepper_granular_flow.initialize(self.fields.solution_ls)
 
-            # ----- Construct depth-integrated landslide solver
-            if self.options.landslide and (not self.options.slide_is_rigid):
-                theta = 0.5
-                if self.simulation_time <= t_epsilon:
-                    solution_if_semi = self.fields.solution_ls
-                    F_liquid_ls = (self.eq_ls.mass_term(self.fields.solution_ls) - self.eq_ls.mass_term(self.solution_ls_old) - self.dt*(
+        if self.options.flow_is_granular:
+            fields_ls = {
+                'phi_i': self.phi_i,
+                'phi_b': self.phi_b,
+                #'kap': self.kap,
+                'uv_div': self.uv_div_ls,
+                'strain_rate': self.strain_rate_ls,
+                'fluid_pressure_gradient': self.grad_p_ls,
+                'h_2d': self.h_2d_ls,
+                }
+
+            dt_ls = self.dt / self.options.n_dt
+            # solver for granular landslide motion
+            a_ls = self.eq_ls.mass_term(self.eq_ls.trial)
+            l_ls = (self.eq_ls.mass_term(self.fields.solution_ls) + Constant(dt_ls)*
+                    self.eq_ls.residual('all', self.fields.solution_ls, self.fields.solution_ls,
+                                        fields_ls, fields_ls, self.bnd_functions['landslide_motion'])
+                   )
+            prob_ls = LinearVariationalProblem(a_ls, l_ls, self.solution_ls_tmp)
+            solver_ls = LinearVariationalSolver(prob_ls, solver_parameters=self.options.timestepper_options.solver_parameters_granular_explicit)
+            # solver for div(velocity)
+            h_ls, hu_ls, hv_ls = self.fields.solution_ls.split()
+            u_ls = conditional(h_ls <= 0, zero(hu_ls.ufl_shape), hu_ls/h_ls)
+            v_ls = conditional(h_ls <= 0, zero(hv_ls.ufl_shape), hv_ls/h_ls)
+            tri_div = TrialFunction(self.uv_div_ls.function_space())
+            test_div = TestFunction(self.uv_div_ls.function_space())
+            a_div = tri_div*test_div*dx
+            l_div = (Dx(u_ls, 0) + Dx(v_ls, 1))*test_div*dx
+            prob_div = LinearVariationalProblem(a_div, l_div, self.uv_div_ls)
+            solver_div = LinearVariationalSolver(prob_div)
+            # solver for strain rate
+            l_sr = 0.5*(Dx(u_ls, 1) + Dx(v_ls, 0))*test_div*dx
+            prob_sr = LinearVariationalProblem(a_div, l_sr, self.strain_rate_ls)
+            solver_sr = LinearVariationalSolver(prob_sr)
+            # solver for fluid pressure at slide surface
+            h_2d = self.bathymetry_dg + self.fields.elev_2d
+            tri_pf = TrialFunction(self.grad_p.function_space())
+            test_pf = TestFunction(self.grad_p.function_space())
+            a_pf = dot(tri_pf, test_pf)*dx
+            l_pf = dot(conditional(h_2d <= 0, zero(self.grad_p.ufl_shape), 
+                       grad(self.options.rho_fluid*physical_constants['g_grav']*h_2d + self.fields.q_2d)), test_pf)*dx
+            prob_pf = LinearVariationalProblem(a_pf, l_pf, self.grad_p)
+            solver_pf = LinearVariationalSolver(prob_pf)
+
+        if self.options.slide_is_viscous_fluid:
+            theta = 0.5
+            solution_if_semi = self.fields.solution_ls
+            F_fluid_ls = (self.eq_ls.mass_term(self.fields.solution_ls) - self.eq_ls.mass_term(self.solution_ls_old) - self.dt*(
                             theta*self.eq_ls.residual('all', self.fields.solution_ls, solution_if_semi, fields, fields, self.bnd_functions['landslide_motion']) + 
                             (1-theta)*self.eq_ls.residual('all', self.solution_ls_old, self.solution_ls_old, fields, fields, self.bnd_functions['landslide_motion'])) - 
                             self.dt*self.eq_ls.add_external_surface_term(uv_2d_old, elev_2d_old, uv_2d_old, elev_ls_old, fields, self.bnd_functions['shallow_water']) 
                            )
-                    prob_liquid_ls = NonlinearVariationalProblem(F_liquid_ls, self.fields.solution_ls)
-                    solver_liquid_ls = NonlinearVariationalSolver(prob_liquid_ls,
-                                                           solver_parameters={'snes_type': 'newtonls', # ksponly, newtonls
-                                                                              'ksp_type': 'gmres', # gmres, preonly
-                                                                              'pc_type': 'fieldsplit'})
+            prob_fluid_ls = NonlinearVariationalProblem(F_fluid_ls, self.fields.solution_ls)
+            solver_fluid_ls = NonlinearVariationalSolver(prob_fluid_ls,
+                                                           solver_parameters=solver_parameters)
+
+        while self.simulation_time <= self.options.simulation_end_time - t_epsilon:
+
+            if self.options.timestepper_type == 'SSPRK22':
+                n_stages = 2
+                coeff = [[0., 1.], [1./2., 1./2.]]
+
+            self.uv_3d_old.assign(self.fields.uv_3d)
+            self.w_3d_old.assign(self.fields.w_3d)
+            self.uv_2d_old.assign(self.fields.uv_2d)
+            self.elev_3d_old.assign(self.fields.elev_3d)
+            self.elev_2d_old.assign(self.fields.elev_2d)
+            self.elev_2d_mid.assign(self.fields.elev_2d)
+            self.q_2d_old.assign(self.fields.q_2d)
+            self.solution_2d_old.assign(self.fields.solution_2d)
+            self.bathymetry_dg_old.assign(self.bathymetry_dg)
+            self.z_coord_3d_old.assign(self.fields.z_coord_3d)
+
+            if self.options.slide_is_rigid:
+                self.h_ls_old.assign(self.fields.h_ls)
+            if self.options.flow_is_granular:
+                self.solution_ls_old.assign(self.fields.solution_ls)
+                self.solution_ls_mid.assign(self.fields.solution_ls)
+
+            h_2d_array = self.fields.elev_2d.dat.data + self.bathymetry_dg.dat.data
+            h_3d_array = self.fields.elev_3d.dat.data + self.bathymetry_3d_dg.dat.data
+
+            couple_granular_and_wave_in_ssprk = False
+            if (not couple_granular_and_wave_in_ssprk):
+                if self.options.flow_is_granular:
+                    if not self.options.lamda == 0.:
+                        self.h_2d_cg.project(self.bathymetry_dg + self.fields.elev_2d)
+                        self.h_2d_ls.dat.data[:] = self.h_2d_cg.dat.data[:]
+                    for i in range(self.options.n_dt):
+                        # solve fluid pressure on slide
+                       # self.extract_bot_q.solve()
+                        self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
+                       # solver_pf.solve()
+                       # self.grad_p_ls.dat.data[:] = self.grad_p.dat.data[:]
+
+                        self.solution_ls_mid.assign(self.fields.solution_ls)
+                        for i_stage in range(n_stages):
+                            solver_ls.solve()
+                            self.fields.solution_ls.assign(coeff[i_stage][0]*self.solution_ls_mid + coeff[i_stage][1]*self.solution_ls_tmp)
+                            if self.options.use_wetting_and_drying:
+                                limiter_start_time = 0.
+                                limiter_end_time = self.options.simulation_end_time - t_epsilon
+                                use_limiter = self.options.use_limiter_for_granular and self.simulation_time >= limiter_start_time and self.simulation_time <= limiter_end_time
+                                self.wd_modification_ls.apply(self.fields.solution_ls, self.options.wetting_and_drying_threshold, use_limiter)
+                            solver_div.solve()
+
+                if self.landslide:
+                    # update landslide motion source
+                    if update_forcings is not None:
+                        update_forcings(self.simulation_time + self.dt)
+
+                    ind_wet_2d = np.where(h_2d_array[:] > 0)[0]
+                    if self.simulation_time >= 0.:
+                        self.fields.slide_source_2d.assign(0.)
+                        self.fields.slide_source_2d.dat.data[ind_wet_2d] = (self.fields.h_ls.dat.data[ind_wet_2d] 
+                                                                            - self.h_ls_old.dat.data[ind_wet_2d])/self.dt/self.slope.dat.data.min()
+                    # copy slide source to 3d
+                    self.copy_slide_source_to_3d.solve()
+                    self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
+
+                # update 3d bathymetry
+                self.copy_bath_to_3d.solve()
+
+
+
+            if self.options.thin_film: 
+                # this thin-film wetting-drying scheme relies on the high resolution at wetting-drying front
+                # has been benchmarked by Thacker test, but needs further work by orther tests, WPan
+                H = self.bathymetry_dg.dat.data + elev_2d.dat.data
+                visu_space = exporter.get_visu_space(uv_2d.function_space())
+                tmp_proj_func = visu_space.get_work_function()
+                tmp_proj_func.project(uv_2d)
+                visu_space.restore_work_function(tmp_proj_func)
+                UV = tmp_proj_func.dat.data
+                ind = np.where(H[:] <= self.options.wetting_and_drying_threshold)[0]
+                H[ind] = self.options.wetting_and_drying_threshold
+                elev_2d.dat.data[ind] = (H - self.bathymetry_dg.dat.data)[ind] # note not appllies to landslide
+
+            else:
+                H_min = (self.bathymetry_dg.dat.data + self.fields.elev_2d.dat.data).min()
+                if self.options.slide_is_viscous_fluid and self.simulation_time <= self.options.t_landslide:
+                    H_min = (self.bathymetry_ls.dat.data + self.fields.elev_ls.dat.data).min()
+              #  H = self.bathymetry_dg + self.fields.elev_2d
+              #  self.bathymetry_wd.project(self.bathymetry_dg + 2*self.options.depth_wd_interface**2/(2*self.options.depth_wd_interface + abs(H)) + 0.5 * (abs(H) - H))
+              #  ExpandFunctionTo3d(self.bathymetry_wd, self.fields.bathymetry_3d).solve()
+
+            # ----- Construct depth-integrated landslide solver
+            if self.options.slide_is_viscous_fluid:
                 if update_forcings is not None:
                     update_forcings(self.simulation_time + self.dt)
                 if self.simulation_time <= self.options.t_landslide:
-                    if not self.options.flow_is_granular:
-                        solver_liquid_ls.solve()
-                        # replace bathymetry by landslide position
-                        self.elev_ls_real.project(self.eq_ls.water_height_displacement(elev_ls) + elev_ls)
-                        self.bathymetry_dg.project(-self.elev_ls_real)
+                    if self.options.slide_is_viscous_fluid:
+                        solver_fluid_ls.solve()
+                        elev_fluid_ls = elev_ls + self.eq_ls.water_height_displacement(elev_ls)
+                        self.bathymetry_dg.project(-elev_fluid_ls)
                 else:
                     print_output('Landslide motion has been stopped, and waves continue propagating!')
 
             hydrostatic_solver_2d = False
             hydrostatic_solver_3d = False
-            extra_pressure_layer = False # 3D solver but with one extra NH pressure layer
             conventional_3d_NH_solver = True
             one_layer_NH_solver = False
             reduced_two_layer_NH_solver = False
@@ -2025,18 +1871,13 @@ class FlowSolver(FrozenClass):
 
             # --- Hydrostatic solver ---
             if hydrostatic_solver_2d:
-                if self.options.landslide and (not self.options.slide_is_rigid) and (not self.options.flow_is_granular):
+                if self.options.slide_is_viscous_fluid:
                     if self.simulation_time <= t_epsilon:
                         timestepper_depth_integrated.F += -self.dt*self.eq_sw_nh.add_landslide_term(uv_ls, elev_ls, fields, self.bathymetry_ls, self.bnd_functions['landslide_motion'])
                         timestepper_depth_integrated.update_solver()
                     if self.simulation_time == self.options.t_landslide:
                         timestepper_depth_integrated.F += self.dt*self.eq_sw_nh.add_landslide_term(uv_ls, elev_ls, fields, self.bathymetry_ls, self.bnd_functions['landslide_motion'])
                         timestepper_depth_integrated.update_solver()
-
-                if self.options.landslide and self.options.slide_is_rigid:
-                    self.bathymetry_dg.project(self.fields.bathymetry_2d - self.slide_shape(self.simulation_time))
-                    elev_ls.project(-self.bathymetry_dg)
-                    self.fields.slide_source_2d.project((self.slide_shape(self.simulation_time + self.dt) - self.slide_shape(self.simulation_time))/self.dt)
 
                 timestepper_depth_integrated.advance(self.simulation_time, update_forcings)
 
@@ -2158,64 +1999,6 @@ class FlowSolver(FrozenClass):
                             self.fields.uv_3d.dat.data[:, self.vert_ind] = self.fields.w_3d.dat.data[:, self.vert_ind] # TODO
 
             # --- Non-hydrostatic solver ---
-            elif extra_pressure_layer:
-                n_stages = 2
-                for i_stage in range(n_stages):
-                    # 2D advance
-                    self.uv_averager.solve()
-                    self.extract_surf_dav_uv.solve()
-                    self.fields.uv_2d.assign(self.fields.uv_dav_2d)
-                    self.copy_uv_dav_to_uv_dav_3d.solve()
-                    self.uv_dav_3d_mid.assign(self.fields.uv_dav_3d)
-                    self.timestepper.store_elevation(i_stage)
-                    if i_stage == 1:
-                        timestepper_operator_splitting.advance(self.simulation_time, update_forcings)
-                    #self.timestepper.timesteppers.swe2d.solve_stage(i_stage, self.simulation_time, update_forcings)
-                    self.copy_elev_to_3d.solve()
-                    self.timestepper.compute_mesh_velocity(i_stage)
-                    # solve Poisson equation for q_2d at bottom
-                    if i_stage == 1:
-                        # solve once due to the selected 2D time-approaching scheme
-                        self.uv_2d_mid.assign(self.fields.uv_2d)
-                        self.elev_2d_mid.assign(self.fields.elev_2d)
-                        theta = 0.5
-                        par = 0.5 # approximation parameter for NH terms
-                        d = self.bathymetry_dg
-                        h_old = d + self.elev_2d_old
-                        h_mid = d + self.elev_2d_mid # self.eq_sw_nh.get_total_depth(self.elev_2d_mid)
-                        # formulate coefficients
-                        A = theta*grad(self.elev_2d_mid - d)/h_mid + (1. - theta)*grad(self.elev_2d_old - d)/h_old
-                        B = div(A) - 2./(par*h_mid*h_mid)
-                        # self.uv_dav_2d_mid replaces self.uv_2d_old
-                        C = (div(self.uv_2d_mid) + (self.w_surface + inner(2.*self.uv_2d_mid - self.uv_dav_2d_mid, grad(d)))/h_mid)/(par*self.dt)
-                        q_2d = self.fields.q_2d
-                        self.solve_poisson_eq(q_2d, self.fields.uv_3d, self.fields.w_3d, A=A, B=B, C=C, multi_layers=False)
-                        # update uv_2d
-                        a = inner(uv_tri, uv_test)*dx
-                        l = inner(self.uv_2d_mid - par*self.dt*(grad(q_2d) + A*q_2d), uv_test)*dx
-                        solve(a == l, self.fields.uv_2d)
-                        # update w_surf
-                        a = w_tri*w_test*dx
-                        l = (self.w_surface + 2.*self.dt*q_2d/h_mid + inner(self.uv_2d_mid - self.uv_dav_2d_mid, grad(d)))*w_test*dx
-                        solve(a == l, self.w_surface)
-
-                        # TODO solve again with nh terms to get more accurate uv_2d, elev_2d
-
-                    # 3D advance in old mesh
-                    self.timestepper.timesteppers.mom_expl.prepare_stage(i_stage, self.simulation_time, update_forcings3d)
-                    # update mesh
-                    self.copy_elev_to_3d.solve()
-                    if self.options.use_ale_moving_mesh:
-                        self.mesh_updater.update_mesh_coordinates()
-                    # solve 3D
-                    self.timestepper.timesteppers.mom_expl.solve_stage(i_stage)
-                    if self.options.use_limiter_for_velocity:
-                        self.uv_limiter.apply(self.fields.uv_3d)
-                    # correct uv_3d
-                    self.copy_uv_to_uv_dav_3d.solve()
-                    self.fields.uv_3d.project(self.fields.uv_3d - (self.uv_dav_3d_mid - self.fields.uv_dav_3d))
-                    self.w_solver.solve()
-
             # based on operator-splitting method used in Telemac3D
             # Jankowski, J.A., 1999. A non-hydrostatic model for free surface flows.
             # Two-stage second-order nonlinear Strong Stability-Preserving (SSP) Runge-Kutta scheme
@@ -2226,17 +2009,19 @@ class FlowSolver(FrozenClass):
                 else:
                     vert_ind = 1
 
-                if self.options.landslide:
-                    if update_forcings is not None:
-                        update_forcings(self.simulation_time)
-                    self.bathymetry_cg_2d.project(self.bathymetry_dg)
-                    if self.simulation_time <= t_epsilon:
-                        bath_2d_to_3d = ExpandFunctionTo3d(self.bathymetry_cg_2d, self.fields.bathymetry_3d)
-                        slide_source_2d_to_3d = ExpandFunctionTo3d(self.fields.slide_source_2d, self.fields.slide_source_3d)
-                    bath_2d_to_3d.solve()
+              #  if self.landslide:
+               #     if update_forcings is not None:
+                #        update_forcings(self.simulation_time)
+                 #   self.bathymetry_cg_2d.project(self.bathymetry_dg)
+                  #  if self.simulation_time <= t_epsilon:
+                   #     bath_2d_to_3d = ExpandFunctionTo3d(self.bathymetry_cg_2d, self.fields.bathymetry_3d)
+                    #    slide_source_2d_to_3d = ExpandFunctionTo3d(self.fields.slide_source_2d, self.fields.slide_source_3d)
+                    #bath_2d_to_3d.solve()
+
+                h_3d = self.fields.elev_3d + self.bathymetry_3d_dg
 
                 if self.simulation_time <= t_epsilon:
-                    assert self.options.use_pressure_correction is False, \
+                    assert not self.options.use_pressure_correction, \
                         'Pressure correction method is temporarily implemented in only sigma model.'
                     # solver for the Poisson equation
                     q_3d = self.fields.q_3d
@@ -2253,7 +2038,7 @@ class FlowSolver(FrozenClass):
                     # nabla^2-term is integrated by parts
                     a_q = dot(grad(test_q), grad(trial_q)) * dx #+ test_q*inner(grad(q), normal)*ds_surf
                     l_q = Const * dot(grad(test_q), uv_3d) * dx
-                    if self.options.landslide:
+                    if self.landslide:
                         l_q += -Const*self.fields.slide_source_3d*self.normal[vert_ind]*test_q*ds_bottom
 
                     if q_is_dg:
@@ -2341,16 +2126,21 @@ class FlowSolver(FrozenClass):
                     for i_stage in range(n_stages):
                         ## 2D advance
                         if i_stage == 1 and self.options.update_free_surface and self.options.solve_separate_elevation_gradient:
-                            self.timestepper.store_elevation(i_stage - 1)
+                           # self.timestepper.store_elevation(i_stage - 1)
                             self.uv_averager.solve()
                             self.extract_surf_dav_uv.solve()
                             self.fields.uv_2d.assign(self.fields.uv_dav_2d)
                             self.copy_uv_dav_to_uv_dav_3d.solve()
                             self.uv_dav_3d_mid.assign(self.fields.uv_dav_3d)
                             timestepper_operator_splitting.advance(self.simulation_time, update_forcings)
+                            if self.limiter_h is not None:
+                                self.limiter_h.apply(self.fields.elev_2d)
+                            if self.limiter_u is not None:
+                                self.limiter_u.apply(self.fields.uv_2d)
                             #self.timestepper.timesteppers.swe2d.solve_stage(i_stage, self.simulation_time, update_forcings)
                             # compute mesh velocity
-                            self.timestepper.compute_mesh_velocity(i_stage - 1)
+                           # self.timestepper.compute_mesh_velocity(i_stage - 1)
+                            self.copy_elev_to_3d.solve()
 
                         ## 3D advance in old mesh
                         # salt_eq
@@ -2369,12 +2159,6 @@ class FlowSolver(FrozenClass):
                             self.timestepper.timesteppers.tke_expl.prepare_stage(i_stage, self.simulation_time, update_forcings3d)
                         # momentum_eq
                         self.timestepper.timesteppers.mom_expl.prepare_stage(i_stage, self.simulation_time, update_forcings3d)
-
-                        ## update mesh
-                        if self.options.update_free_surface:
-                            self.copy_elev_to_3d.solve()
-                            if self.options.use_ale_moving_mesh:
-                                self.mesh_updater.update_mesh_coordinates()
 
                         ## solve 3D
                         # salt_eq
@@ -2401,6 +2185,11 @@ class FlowSolver(FrozenClass):
                         self.timestepper.timesteppers.mom_expl.solve_stage(i_stage)
                         if self.options.use_limiter_for_velocity:
                             self.uv_limiter.apply(self.fields.uv_3d)
+
+                        # wetting and drying treatment
+                        if self.options.use_wetting_and_drying:
+                            ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
+                            self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
 
                         last_stage = i_stage == n_stages - 1
 
@@ -2438,13 +2227,18 @@ class FlowSolver(FrozenClass):
                             self.timestepper._update_baroclinicity()
 
                         if last_stage:
-                            if self.options.landslide:
-                                slide_source_2d_to_3d.solve()
+                           # if self.landslide:
+                           #     slide_source_2d_to_3d.solve()
                             # solve q_3d
                             solver_q.solve()
                            # solve(a_q==l_q, q_3d)
                             # update uv_3d
                             solver_u.solve()
+
+                            # wetting and drying treatment
+                            if self.options.use_wetting_and_drying:
+                                ind_dry_3d = np.where(h_3d_array[:] <= 0)[0]
+                                self.fields.uv_3d.dat.data[ind_dry_3d] = [0, 0, 0]
 
                             # update water level elev_2d
                             if self.options.update_free_surface:
@@ -2457,8 +2251,18 @@ class FlowSolver(FrozenClass):
                                 self.fields.elev_2d.assign(self.elev_2d_mid)
                                 ## update mesh
                                 self.copy_elev_to_3d.solve()
-                                if self.options.use_ale_moving_mesh:
-                                    self.mesh_updater.update_mesh_coordinates()
+                               # if self.options.use_ale_moving_mesh:
+                               #     self.mesh_updater.update_mesh_coordinates()
+                                if self.limiter_h is not None:
+                                    self.limiter_h.apply(self.fields.elev_2d)
+                                if self.limiter_u is not None:
+                                    self.limiter_u.apply(self.fields.uv_2d)
+                            ## update mesh
+                            self.fields.z_coord_3d.project(z_in_sigma)
+                            self.mesh.coordinates.dat.data[:, 2] = self.fields.z_coord_3d.dat.data[:]
+                            self.mesh_updater.update_elem_height()
+                            self.mesh.clear_spatial_index()
+                           # self.fields.w_mesh_3d.project((self.fields.z_coord_3d - self.z_coord_3d_old)/self.dt)
 
                 else: # ssprk in NHWAVE TODO change something about ALE due to nh pressure updating free surface
                     for i_stage in range(n_stages):
@@ -2548,7 +2352,7 @@ class FlowSolver(FrozenClass):
                             self.copy_uv_to_uv_dav_3d.solve()
                             self.fields.uv_3d.assign(self.fields.uv_3d + (self.fields.uv_dav_3d - self.uv_dav_3d_mid))
 
-                        if self.options.landslide:
+                        if self.landslide:
                             slide_source_2d_to_3d.solve()
                         # solve q_3d
                         solver_q.solve()
@@ -2636,14 +2440,14 @@ class FlowSolver(FrozenClass):
                     A = theta*grad(self.elev_2d_mid - d)/h_mid + (1. - theta)*grad(self.elev_2d_old - d)/h_old
                     B = div(A) - 2./(par*h_mid*h_mid)
                     C = (div(self.uv_2d_mid) + (self.w_surface + inner(2.*self.uv_2d_mid - self.uv_2d_old, grad(d)))/h_mid)/(par*self.dt)
-                    if self.options.landslide:
+                    if self.landslide:
                         C = (div(self.uv_2d_mid) + (self.w_surface + inner(2.*self.uv_2d_mid - self.uv_2d_old, grad(d)) - self.fields.slide_source_2d)/h_mid)/(par*self.dt)
                 else:
                     A = theta*grad(self.elev_2d_mid - d)/h_mid + (1. - theta)*grad(self.elev_2d_old - d)/h_old
                     B = div(A) - 2./(par*h_mid*h_mid)
                     C = (div(self.uv_2d_mid) + (self.w_surface + 2.*self.dt*self.q_2d_old/h_mid +
                          inner(2.*self.uv_2d_mid - self.uv_2d_old, grad(d)))/h_mid)/(par*self.dt)
-                    if self.options.landslide:
+                    if self.landslide:
                         C = (div(self.uv_2d_mid) + (self.w_surface + 2.*self.dt*self.q_2d_old/h_mid +
                              inner(2.*self.uv_2d_mid - self.uv_2d_old, grad(d)) - self.fields.slide_source_2d)/h_mid)/(par*self.dt)
                 q_2d = self.fields.q_2d
@@ -2806,7 +2610,7 @@ class FlowSolver(FrozenClass):
                           (F_1*q_1*q_test_0 + F_2*q_1*q_test_1)*dx -
                           (G_1*q_test_0 + G_2*q_test_1)*dx
                          )
-                    if self.options.landslide:
+                    if self.landslide:
                         f += 2.*self.fields.slide_source_2d*(q_test_0 + q_test_1)*dx
                     for bnd_marker in self.boundary_markers:
                         func = self.bnd_functions['shallow_water'].get(bnd_marker)
@@ -3132,7 +2936,7 @@ class FlowSolver(FrozenClass):
                         timestepper_dic = {}
                         for k in range(self.n_layers - 1):
                             timestepper_dic['layer_'+str(k+1)] = timeintegrator.CrankNicolson(self.eq_sw_mom, getattr(self, 'uv_av_'+str(k+1)),
-                                                              fields_2d, self.dt,
+                                                              fields, self.dt,
                                                               bnd_conditions=self.bnd_functions['momentum'],
                                                               solver_parameters=self.options.timestepper_options.solver_parameters_momentum_implicit,
                                                               semi_implicit=False,
@@ -3223,7 +3027,7 @@ class FlowSolver(FrozenClass):
                                                       1./h_layer[k+1]*dot(grad_2_layerk, grad(z_dic['z_'+str(k)+str(k+1)]))*(q[k]-q[k+1]) + 
                                                       1./h_layer[k+2]*dot(grad_3_layerk, grad(z_dic['z_'+str(k+1)+str(k+2)]))*(q[k+1]-q[k+2]))*q_test[k]*dx
                         # weak form of slide source term
-                        if self.options.landslide:
+                        if self.landslide:
                             slide_source_term = -2.*self.fields.slide_source_2d*q_test[k]*dx
                             f += slide_source_term
                         f += div_hu_term + vert_vel_term - interface_term
@@ -3584,17 +3388,12 @@ class FlowSolver(FrozenClass):
                 # exporter with wetting-drying handle
                 if self.options.use_wetting_and_drying:
                     self.solution_2d_tmp.assign(self.fields.solution_2d)
-                    self.solution_ls_tmp.assign(self.fields.solution_ls)
                     H = self.bathymetry_dg.dat.data + elev_2d.dat.data
-                    h_ls = self.bathymetry_ls.dat.data + elev_ls.dat.data
                     ind = np.where(H[:] <= 0.)[0]
-                    ind_ls = np.where(h_ls[:] <= 0.)[0]
                     elev_2d.dat.data[ind] = 1E-6 - self.bathymetry_dg.dat.data[ind]
-                    elev_ls.dat.data[ind_ls] = 1E-6 - self.bathymetry_ls.dat.data[ind_ls]
                 self.export()
                 if self.options.use_wetting_and_drying:
                     self.fields.solution_2d.assign(self.solution_2d_tmp)
-                    self.fields.solution_ls.assign(self.solution_ls_tmp)
 
                 if export_func is not None:
                     export_func()

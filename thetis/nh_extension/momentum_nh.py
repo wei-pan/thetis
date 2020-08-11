@@ -194,8 +194,9 @@ class HorizontalAdvectionTerm(MomentumTerm):
         uv_mag = fields_old.get('uv_mag')
         lax_friedrichs_factor = fields_old.get('lax_friedrichs_velocity_scaling_factor')
 
-        uv = solution
-        uv_old = solution_old
+        total_h = self.bathymetry + fields_old['elev_3d']
+        uv = conditional(total_h <= 0, zero(solution.ufl_shape), solution)
+        uv_old = conditional(total_h <= 0, zero(solution_old.ufl_shape), solution_old)
 
         if self.horizontal_domain_is_2d:
             f = -(Dx(self.test[0], 0)*uv[0]*uv_old[0]
@@ -362,8 +363,10 @@ class VerticalAdvectionTerm(MomentumTerm):
         if not self.use_nonlinear_equations:
             return 0
 
-        uv_3d = solution
-
+        total_h = self.bathymetry + fields_old['elev_3d']
+        uv_3d = conditional(total_h <= 0, zero(solution.ufl_shape), solution)
+        solution_old = conditional(total_h <= 0, zero(solution_old.ufl_shape), solution_old)
+        w_mesh = conditional(total_h <= 0, zero(w_mesh.ufl_shape), w_mesh)
         if self.horizontal_domain_is_2d:
             vertvelo = solution_old[2]
            # vertvelo = w[2]
@@ -858,7 +861,10 @@ class HorizontalAdvectionTerm_in_VertMom(MomentumTerm):
         if not self.use_nonlinear_equations:
             return 0
         elev = fields_old['elev_3d']
-        uv = fields_old.get('uv_3d')#solution_old
+        total_h = self.bathymetry + fields_old['elev_3d']
+        uv = conditional(total_h <= 0, zero(fields_old.get('uv_3d').ufl_shape), fields_old.get('uv_3d'))
+        solution = conditional(total_h <= 0, zero(solution.ufl_shape), solution)
+        solution_old = conditional(total_h <= 0, zero(solution_old.ufl_shape), solution_old)
 
         uv_p1 = fields_old.get('uv_p1')
         uv_mag = fields_old.get('uv_mag')
@@ -1018,8 +1024,10 @@ class VerticalAdvectionTerm_in_VertMom(MomentumTerm):
     def residual(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         if not self.use_nonlinear_equations:
             return 0
-        w = fields_old.get('uv_3d')
-        w_mesh = fields_old.get('w_mesh')
+        total_h = self.bathymetry + fields_old['elev_3d']
+        solution = conditional(total_h <= 0, zero(solution.ufl_shape), solution)
+        w = conditional(total_h <= 0, zero(fields_old.get('uv_3d').ufl_shape), fields_old.get('uv_3d'))
+        w_mesh = conditional(total_h <= 0, zero(fields_old.get('w_mesh').ufl_shape), fields_old.get('w_mesh'))
         lax_friedrichs_factor = fields_old.get('lax_friedrichs_velocity_scaling_factor')
 
         if self.horizontal_domain_is_2d:

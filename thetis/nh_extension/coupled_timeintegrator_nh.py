@@ -225,7 +225,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
         solver = self.solver
         impl_v_visc, expl_v_visc, impl_v_diff, expl_v_diff = self._get_vert_diffusivity_functions()
 
-        fields = {'elev_3d': self.fields.elev_3d,  # FIXME rename elev
+        fields = {'elev_3d': self.fields.get('elev_3d'),  # FIXME rename elev
                   'int_pg': self.fields.get('int_pg_3d'),
                   'uv_depth_av': self.fields.get('uv_dav_3d'),
                   'w': self.fields.w_3d,
@@ -243,10 +243,10 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                   'q_3d': self.fields.get('q_3d'),
                   'use_pressure_correction': self.options.use_pressure_correction,
                   'solve_separate_elevation_gradient': self.options.solve_separate_elevation_gradient,
-                  'sponge_damping_3d': self.solver.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_xstart, 
+                  'sponge_damping_3d': self.solver.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_start, 
                                                                       alpha=10., sponge_is_2d=False),
                  # 'sigma_dt': self.fields.sigma_dt,
-                 # 'sigma_dx': self.fields.sigma_dx,
+                  'sigma_dx': self.fields.sigma_dx,
                   'omega': self.fields.omega,
                   }
         friction_fields = {
@@ -291,7 +291,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                       'lax_friedrichs_tracer_scaling_factor': self.options.lax_friedrichs_tracer_scaling_factor,
                       # below for NH extension
                      # 'sigma_dt': self.fields.sigma_dt,
-                     # 'sigma_dx': self.fields.sigma_dx,
+                      'sigma_dx': self.fields.sigma_dx,
                       'omega': self.fields.omega,
                       'settling_velocity': self.options.settling_velocity,
                       'sigma_h': self.options.sigma_h,
@@ -333,7 +333,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                       'lax_friedrichs_tracer_scaling_factor': self.options.lax_friedrichs_tracer_scaling_factor,
                       # below for NH extension
                      # 'sigma_dt': self.fields.sigma_dt,
-                     # 'sigma_dx': self.fields.sigma_dx,
+                      'sigma_dx': self.fields.sigma_dx,
                       'omega': self.fields.omega,
                       }
             self.timesteppers.salt_expl = self.integrator_3d(
@@ -370,7 +370,7 @@ class CoupledTimeIntegrator(CoupledTimeIntegratorBase):
                       'lax_friedrichs_tracer_scaling_factor': self.options.lax_friedrichs_tracer_scaling_factor,
                       # below for NH extension
                      # 'sigma_dt': self.fields.sigma_dt,
-                     # 'sigma_dx': self.fields.sigma_dx,
+                      'sigma_dx': self.fields.sigma_dx,
                       'omega': self.fields.omega,
                       }
             self.timesteppers.temp_expl = self.integrator_3d(

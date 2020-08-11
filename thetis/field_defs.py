@@ -390,12 +390,6 @@ field_metadata['slide_source_3d'] = {
     'unit': 'm s-1',
     'filename': 'SlideSource_3d',
 }
-field_metadata['bed_slope'] = {
-    'name': 'Bed slope for granular slide modelling',
-    'shortname': 'Bed slope for granular slide modelling',
-    'unit': '-',
-    'filename': 'BedSlope_ls',
-}
 field_metadata['sigma_dt'] = {
     'name': 'Time derivative of z in sigma mesh',
     'shortname': 'Time derivative of z in sigma mesh',

@@ -244,6 +244,9 @@ class FlowSolver(FrozenClass):
             self.fields.uv_ls = self.fields.solution_ls.sub(0)
             self.fields.elev_ls = self.fields.solution_ls.sub(1)
             self.fields.slide_source_2d = Function(self.function_spaces.H_2d)
+            # new adds for rigid and granular landslides
+            self.fields.h_ls = Function(self.function_spaces.H_2d)
+            self.h_ls_old = Function(self.function_spaces.H_2d)
 
         # functions for multi-layer approach
         fs_q = get_functionspace(self.mesh2d, 'CG', self.options.polynomial_degree)
@@ -309,6 +312,14 @@ class FlowSolver(FrozenClass):
                 self.tracer_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.Q_2d)
             else:
                 self.tracer_limiter = None
+
+        # initialise limiter
+        if self.options.polynomial_degree == 1:
+            self.limiter_h = limiter.VertexBasedP1DGLimiter(self.function_spaces.H_2d)
+            self.limiter_u = limiter.VertexBasedP1DGLimiter(self.function_spaces.U_2d)
+        else:
+            self.limiter_h = None
+            self.limiter_u = None
 
         self._isfrozen = True  # disallow creating new attributes
 
@@ -471,7 +482,7 @@ class FlowSolver(FrozenClass):
             self.create_exporters()
         self._initialized = True
 
-    def assign_initial_conditions(self, elev=None, uv=None, tracer=None, elev_slide=None, uv_slide=None):
+    def assign_initial_conditions(self, elev=None, uv=None, tracer=None, elev_slide=None, uv_slide=None, h_ls=None):
         """
         Assigns initial conditions
 
@@ -497,6 +508,8 @@ class FlowSolver(FrozenClass):
                 elev_ls.project(elev_slide)
             if uv_slide is not None:
                 uv_ls.project(uv_slide)
+            if h_ls is not None:
+                self.fields.h_ls.project(h_ls)
 
         self.timestepper.initialize(self.fields.solution_2d)
 
@@ -911,9 +924,17 @@ class FlowSolver(FrozenClass):
                             f += slide_source_term
                         f += div_hu_term + vert_vel_term - interface_term
 
+                        if k == 0:
+                            bcs = []
                         for bnd_marker in self.boundary_markers:
                             func = self.bnd_functions['shallow_water'].get(bnd_marker)
                             ds_bnd = ds(int(bnd_marker))
+                            if func is not None and n_layers == 1: # inflow bnd #TODO set more general conditional statement
+                                bc = DirichletBC(self.fields.q_2d.function_space(), 0., int(bnd_marker))
+                                bcs.append(bc)
+                            if func is not None and n_layers > 1: # inflow bnd #TODO set more general conditional statement
+                                bc = DirichletBC(self.q_mixed.function_space().sub(k), Constant(0.), int(bnd_marker))
+                                bcs.append(bc)
                             if self.bnd_functions['shallow_water'] == {}:#func is None or 'q' not in func:
                                 # bnd terms of div(h_{k+1}*uv_av_{k+1})
                                 f += -0.5*self.dt*(q[k]-q[k+1])*dot(grad(fields['z_'+str(k)+str(k+1)]), self.normal_2d)*q_test[k]*ds_bnd
@@ -935,9 +956,9 @@ class FlowSolver(FrozenClass):
                                                       dot(grad_2_layerk, self.normal_2d)*(q[k]+q[k+1]) +
                                                       dot(grad_3_layerk, self.normal_2d)*(q[k+1]+q[k+2]))*q_test[k]*ds_bnd
 
-                    prob_q = NonlinearVariationalProblem(f, self.q_mixed)
+                    prob_q = NonlinearVariationalProblem(f, self.q_mixed, bcs=bcs)
                     if n_layers == 1:
-                        prob_q = NonlinearVariationalProblem(f, self.fields.q_2d)
+                        prob_q = NonlinearVariationalProblem(f, self.fields.q_2d, bcs=bcs)
                     solver_q = NonlinearVariationalSolver(prob_q,
                                                         solver_parameters={'snes_type': 'ksponly', # ksponly, newtonls
                                                                'ksp_type': 'preonly', # gmres, preonly
@@ -965,6 +986,14 @@ class FlowSolver(FrozenClass):
             self.elev_2d_mid.assign(self.fields.elev_2d)
             self.bathymetry_dg_old.assign(self.bathymetry_dg)
 
+            if self.options.landslide:
+                self.h_ls_old.assign(self.fields.h_ls)
+                # update landslide motion source
+                if update_forcings is not None:
+                    update_forcings(self.simulation_time + self.dt) # update h_ls
+                    self.fields.slide_source_2d.assign((self.fields.h_ls - self.h_ls_old)/self.dt)
+                    self.bathymetry_dg.project(self.fields.bathymetry_2d - self.fields.h_ls)
+
             hydrostatic_solver_2d = False
             # --- Hydrostatic solver ---
             if hydrostatic_solver_2d:
@@ -975,7 +1004,16 @@ class FlowSolver(FrozenClass):
                # self.options.depth_wd_interface.assign(self.get_alpha(H_min))
 
                 # solve 2D depth-integrated equations initially
-                self.timestepper.advance(self.simulation_time, update_forcings)
+                if self.options.landslide: # save time
+                    self.timestepper.advance(self.simulation_time) # TODO modify to avoid necessary update_forcings not added
+                else:
+                    self.timestepper.advance(self.simulation_time, update_forcings)
+
+                if self.options.use_limiter_for_elevation:
+                    if self.limiter_h is not None:
+                        self.limiter_h.apply(self.fields.elev_2d)
+                    if self.limiter_u is not None:
+                        self.limiter_u.apply(self.fields.uv_2d)
 
                 if n_layers >= 2:
                     # solve layer-averaged horizontal velocity in the hydrostatic step
@@ -986,6 +1024,9 @@ class FlowSolver(FrozenClass):
                             timestepper_dic['uv_layer_'+str(k+1)].advance(self.simulation_time) #TODO modify to avoid necessary update_forcings not added
                         else:
                             timestepper_dic['uv_layer_'+str(k+1)].advance(self.simulation_time, update_forcings)
+                        if self.options.use_limiter_for_multi_layer:
+                            if self.limiter_u is not None:
+                                self.limiter_u.apply(u_list[k])
                         #sum_uv_av += u_list[k] # cannot sum by this way
                         sum_uv_av = sum_uv_av + alpha[k]*u_list[k]
                     u_list[n_layers-1].project((uv_2d - sum_uv_av)/alpha[n_layers-1])
@@ -1009,8 +1050,14 @@ class FlowSolver(FrozenClass):
                     sum_uv_av = sum_uv_av + alpha[k]*u_list[k]
                 self.fields.uv_2d.project(sum_uv_av)
 
+                if self.options.use_limiter_for_elevation:
+                    if self.limiter_u is not None:
+                        self.limiter_u.apply(self.fields.uv_2d)
+
                 # update water level elev_2d
                 solving_free_surface_eq = True
+                if n_layers == 1:
+                    solving_free_surface_eq = False
                 if self.simulation_time <= t_epsilon and self.options.update_free_surface and not solving_free_surface_eq:
                     # update layer thickness and z-coordinate
                     h_tot_spl = shallowwater_nh.ShallowWaterTerm(self.fields.solution_2d.function_space(), self.bathymetry_dg, self.options).get_total_depth(eta_2d)
@@ -1031,10 +1078,14 @@ class FlowSolver(FrozenClass):
                         #uv_2d.assign(self.uv_2d_mid)
                     else:
                         if self.options.landslide: # save time
-                            timestepper_free_surface.advance(self.simulation_time) #TODO modify to avoid necessary update_forcings not added
+                            timestepper_free_surface.advance(self.simulation_time) # TODO modify to avoid necessary update_forcings not added
                         else:
                             timestepper_free_surface.advance(self.simulation_time, update_forcings)
                         self.fields.elev_2d.assign(self.elev_2d_old)
+
+                    if self.options.use_limiter_for_elevation:
+                        if self.limiter_h is not None:
+                            self.limiter_h.apply(self.fields.elev_2d)
 
                 if self.options.set_vertical_2d:
                     self.uv_2d_dg.project(uv_2d)

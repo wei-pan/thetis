@@ -5,7 +5,7 @@ from __future__ import absolute_import
 from .utility_nh import *
 from . import shallowwater_nh
 from . import shallowwater_cf
-from . import landslide_motion
+from . import fluid_slide
 from . import momentum_sigma
 from . import tracer_sigma
 from . import coupled_timeintegrator_nh
@@ -415,6 +415,8 @@ class FlowSolver(FrozenClass):
         elif self.options.element_family == 'dg-dg':
             self.function_spaces.U = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'DG', self.options.polynomial_degree, name='U', vector=True)
             self.function_spaces.W = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'DG', self.options.polynomial_degree, name='W', vector=True)
+           # self.function_spaces.U = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'DG', 0, name='U', vector=True)
+           # self.function_spaces.W = get_functionspace(self.mesh, 'DG', self.options.polynomial_degree, 'DG', 0, name='W', vector=True)
         else:
             raise Exception('Unsupported finite element family {:}'.format(self.options.element_family))
 
@@ -568,6 +570,11 @@ class FlowSolver(FrozenClass):
             self.uv_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.U)
         else:
             self.uv_limiter = None
+
+       # if self.options.use_limiter_for_elevation:
+       #     self.eta2d_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.H_2d)
+       #     self.uv2d_limiter = limiter.VertexBasedP1DGLimiter(self.function_spaces.U_2d)
+
         if self.options.use_turbulence:
             if self.options.turbulence_model_type == 'gls':
                 # NOTE tke and psi should be in H as tracers ??
@@ -612,7 +619,7 @@ class FlowSolver(FrozenClass):
                 raise Exception('Unsupported turbulence model: {:}'.format(self.options.turbulence_model))
         else:
             self.turbulence_model = None
-        # copute total viscosity/diffusivity
+        # compute total viscosity/diffusivity
         self.tot_h_visc = SumFunction()
         self.tot_h_visc.add(self.options.horizontal_viscosity)
         self.tot_h_visc.add(self.fields.get('smag_visc_3d'))
@@ -657,7 +664,7 @@ class FlowSolver(FrozenClass):
         self.w_surface = Function(self.function_spaces.H_2d)
         self.w_interface = Function(self.function_spaces.H_2d)
         self.fields.w_nh = Function(self.function_spaces.H_2d)
-        self.fields.q_3d = Function(FunctionSpace(self.mesh, 'CG', self.options.polynomial_degree+1))
+        self.fields.q_3d = Function(FunctionSpace(self.mesh, 'CG', self.options.polynomial_degree+1, 'CG', self.options.polynomial_degree+1))
         self.q_3d_mid = Function(self.fields.q_3d.function_space())
         self.q_3d_dq = Function(self.fields.q_3d.function_space())
         self.fields.q_2d = Function(self.function_spaces.P2_2d)
@@ -1255,66 +1262,6 @@ class FlowSolver(FrozenClass):
                 damp_vector[i] = 0.
         return damping_coeff
 
-    def slide_shape(self, simulation_time):
-        """
-        Specific slide shape function for rigid landslide generated tsunami modelling.
-        """
-        L = 215.E3
-        B = self.mesh2d.coordinates.sub(1).dat.data.max()
-        S = 7.5E3
-        hmax = 144.
-        Umax = 35.
-        T = self.options.t_landslide
-        Ta = 0.5*T
-        Tc = 0.
-        Td = T - Ta - Tc
-        R = 150.E3
-        Ra = 75.E3
-        Rc = Umax*Tc
-        Rd = R - Ra - Rc
-        phi = 0.
-        x0 = 1112.5E3
-        y0 = 0.5*B
-        if simulation_time < Ta:
-            s = Ra*(1. - cos(Umax/Ra*simulation_time))
-        elif simulation_time >= Ta and simulation_time < (Ta + Tc):
-            s = Ra + Umax*(simulation_time - Ta)
-        elif simulation_time >= (Ta + Tc) and simulation_time < T:
-            s = Ra + Rc + Rd*(sin(Umax/Rd*(simulation_time - Ta - Tc)))
-        else:
-            s = R
-        xs = x0 + s*cos(phi)
-        ys = y0 + s*sin(phi)
-        # calculate slide shape below
-        hs = Function(self.function_spaces.P1_2d)
-        xy_vector = self.mesh2d.coordinates.dat.data
-        hs_vector = hs.dat.data
-        assert xy_vector.shape[0] == hs_vector.shape[0]
-        for i, xy in enumerate(xy_vector):
-            x = (xy[0] - xs)*cos(phi) + (xy[1] - ys)*sin(phi)
-            y = -(xy[0] - xs)*sin(phi) + (xy[1] - ys)*cos(phi)
-            if x < -(L+S) and x > -(L+2.*S):
-                hs_vector[i] = hmax*exp(-(2.*(x+S+L)/S)**4 - (2.*y/B)**4)
-            elif x < -S and x >= -(L+S):
-                hs_vector[i] = hmax*exp(-(2.*y/B)**4)
-            elif x < 0. and x >= -S:
-                hs_vector[i] = hmax*exp(-(2.*(x+S)/S)**4 - (2.*y/B)**4)
-            else:
-                hs_vector[i] = 0.
-
-            is_block = True # i.e. block slide
-            if is_block:
-                if x < -(L+S) and x > -(L+2.*S):
-                   hs_vector[i] = hmax*exp(-(2.*(x+S+L)/S)**4)
-                elif x < -S and x >= -(L+S):
-                   hs_vector[i] = hmax
-                elif x < 0. and x >= -S:
-                   hs_vector[i] = hmax*exp(-(2.*(x+S)/S)**4)
-                else:
-                   hs_vector[i] = 0.
-
-        return hs
-
     def iterate(self, update_forcings=None, update_forcings3d=None,
                 export_func=None):
         """
@@ -1515,7 +1462,7 @@ class FlowSolver(FrozenClass):
 
             # --- Hydrostatic solver ---
             if hydrostatic_solver_2d:
-                if self.options.landslide and (not self.options.slide_is_rigid) and (not self.options.flow_is_granular):
+                if self.options.landslide and self.options.slide_is_viscous_fluid:
                     if self.simulation_time <= t_epsilon:
                         self.bathymetry_ls.project(self.bathymetry_cg_2d)
                         timestepper_depth_integrated.F += -self.dt*self.eq_sw_nh.add_landslide_term(uv_ls, elev_ls, fields, self.bathymetry_ls, self.bnd_functions['landslide_motion'])
@@ -1523,11 +1470,6 @@ class FlowSolver(FrozenClass):
                     if self.simulation_time == self.options.t_landslide:
                         timestepper_depth_integrated.F += self.dt*self.eq_sw_nh.add_landslide_term(uv_ls, elev_ls, fields, self.bathymetry_ls, self.bnd_functions['landslide_motion'])
                         timestepper_depth_integrated.update_solver()
-
-                if self.options.landslide and self.options.slide_is_rigid:
-                    self.bathymetry_dg.project(self.fields.bathymetry_2d - self.slide_shape(self.simulation_time))
-                    elev_ls.project(-self.bathymetry_dg)
-                    self.fields.slide_source_2d.project((self.slide_shape(self.simulation_time + self.dt) - self.slide_shape(self.simulation_time))/self.dt)
 
                 timestepper_depth_integrated.advance(self.simulation_time, update_forcings)
 

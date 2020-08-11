@@ -467,7 +467,8 @@ class VerticalIntegrator(object):
     """
     def __init__(self, input, output, bottom_to_top=True,
                  bnd_value=Constant(0.0), average=False,
-                 bathymetry=None, elevation=None, solver_parameters={}):
+                 bathymetry=None, elevation=None, 
+                 use_in_sigma=False, solver_parameters={}):
         """
         :arg input: 3D field to integrate
         :arg output: 3D field where the integral is stored
@@ -528,7 +529,9 @@ class VerticalIntegrator(object):
             source = input/(elevation + bathymetry)
         else:
             source = input
-        self.l = inner(source, phi)*self.dx + bnd_term #TODO check if 'minus bnd_term' is more suitable
+        if use_in_sigma: # NOTE this is only for sigma coordinate
+            source = input*(elevation + bathymetry)
+        self.l = inner(source, phi)*self.dx + bnd_term # TODO check if 'minus bnd_term' is more suitable
         self.prob = LinearVariationalProblem(self.a, self.l, output, constant_jacobian=average)
         self.solver = LinearVariationalSolver(self.prob, solver_parameters=solver_parameters)
 

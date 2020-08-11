@@ -13,7 +13,8 @@ class MomentumEquation(Equation):
     Hydrostatic 3D momentum equation :eq:`mom_eq_split` for mode split models
     """
     def __init__(self, function_space,
-                 bathymetry, options, v_elem_size=None, h_elem_size=None):
+                 bathymetry, options, v_elem_size=None, h_elem_size=None,
+                 sipg_parameter=Constant(10.0), sipg_parameter_vertical=Constant(10.0)):
         """
         :arg function_space: :class:`FunctionSpace` where the solution belongs
         :kwarg bathymetry: bathymetry of the domain
@@ -27,6 +28,8 @@ class MomentumEquation(Equation):
         super(MomentumEquation, self).__init__(function_space)
         self.function_space = function_space
         self.bathymetry = bathymetry
+        self.h_elem_size = h_elem_size
+        self.v_elem_size = v_elem_size
         self.options = options
         self.mesh = self.function_space.mesh()
         self.test = TestFunction(function_space)
@@ -34,6 +37,9 @@ class MomentumEquation(Equation):
         self.normal = FacetNormal(self.mesh)
         self.boundary_markers = sorted(self.function_space.mesh().exterior_facets.unique_markers)
         self.boundary_len = self.function_space.mesh().boundary_len
+        # penalty parameter which ensures stability of the Interior Penalty method
+        self.sipg_parameter = sipg_parameter
+        self.sipg_parameter_vertical = sipg_parameter_vertical
         # negigible depth set for wetting and drying
         self.threshold = self.options.wetting_and_drying_threshold
         # define measures with a reasonable quadrature degree
@@ -50,8 +56,10 @@ class MomentumEquation(Equation):
     def residual(self, label, solution, solution_old, fields, fields_old, bnd_conditions):
         f = 0
 
-        omega = fields['omega']
-        eta = fields['elev_3d']
+        omega = fields.get('omega')
+        eta = fields.get('elev_3d')
+        viscosity_h = fields.get('viscosity_h')
+        viscosity_v = fields.get('viscosity_v')
         h_3d = eta + self.bathymetry
         h_total = conditional(h_3d <= self.options.depth_wd_interface, zero(h_3d.ufl_shape), h_3d)
 
@@ -66,7 +74,7 @@ class MomentumEquation(Equation):
 
             # momentum
             mom = conditional(h_3d <= self.options.depth_wd_interface, zero(solution.ufl_shape), solution)
-            vel = fields['uv_3d']
+            vel = fields.get('uv_3d')
             # construct forms
             F1 = as_vector((mom[0] * vel[0] + 0.5 * g_grav * h_total**2, mom[0] * vel[1], mom[0] * vel[2]))
             F2 = as_vector((mom[0] * vel[1], mom[1] * vel[1] + 0.5 * g_grav * h_total**2, mom[1] * vel[2]))
@@ -75,6 +83,9 @@ class MomentumEquation(Equation):
 
             use_lax_friedrichs = self.options.use_lax_friedrichs_velocity
             include_elev_grad = True
+            include_vis_term = True #TODO set in options
+            if viscosity_h is None and viscosity_v is None:
+                include_vis_term = False
             # advection
             uv_av = avg(vel)
             w_av = avg(omega) # in sigma form
@@ -99,9 +110,7 @@ class MomentumEquation(Equation):
             # Lax-Friedrichs stabilization
             if use_lax_friedrichs:
                 lax_friedrichs_factor = self.options.lax_friedrichs_velocity_scaling_factor
-                gamma = 0.5*abs((uv_av[0]*self.normal('-')[0]
-                                 + uv_av[1]*self.normal('-')[1]
-                                 + w_av*self.normal('-')[2]))*lax_friedrichs_factor # TODO check if uv_p1 is essential
+                gamma = 0.5*abs(un_av)*lax_friedrichs_factor
                 f += gamma*(jump(self.test[0])*jump(mom[0])
                             + jump(self.test[1])*jump(mom[1])
                             + jump(self.test[2])*jump(mom[2]))*(self.dS_v + self.dS_h) # TODO check if adding dS_v is ok for vert adv
@@ -110,15 +119,15 @@ class MomentumEquation(Equation):
             f += (# equation in x direction
                   mom[0]*vel[0]*self.test[0]*self.normal[0]
                   + mom[0]*vel[1]*self.test[0]*self.normal[1]
-                  + mom[0]*omega*self.test[0]*self.normal[2]
+                 # + mom[0]*omega*self.test[0]*self.normal[2] # dropping this for dispersive regular waves
                   # equation in y direction
                   + mom[1]*vel[0]*self.test[1]*self.normal[0]
                   + mom[1]*vel[1]*self.test[1]*self.normal[1]
-                  + mom[1]*omega*self.test[1]*self.normal[2]
+                 # + mom[1]*omega*self.test[1]*self.normal[2]
                   # equation in z direction
                   + mom[2]*vel[0]*self.test[2]*self.normal[0]
                   + mom[2]*vel[1]*self.test[2]*self.normal[1]
-                  #+ mom[2]*omega*self.test[2]*self.normal[2] # fails with this in cases e.g. bb_bar
+                 # + mom[2]*omega*self.test[2]*self.normal[2] # fails with this in cases e.g. bb_bar
                   )*(self.ds_surf)
             # elevation gradient terms
             if include_elev_grad:
@@ -134,9 +143,95 @@ class MomentumEquation(Equation):
                 #f += g_grav*eta*(self.test[0] * self.normal[0] 
                 #                 + self.test[1] * self.normal[1])*(self.ds_bottom + self.ds_surf)
 
+            # viscous terms
+            def vis(i, mom):
+                F = 0
+                F += (
+                      viscosity_h*Dx(mom[i], 0)*Dx(self.test[i], 0)*self.dx
+                      + viscosity_h*Dx(mom[i], 1)*Dx(self.test[i], 1)*self.dx
+                      + viscosity_v*Dx(mom[i], 2)*Dx(sigma_dxyz*self.test[i], 2)*self.dx
+                     )
+                F += (
+                      -jump(self.normal[0], self.test[i])*avg(viscosity_h*Dx(mom[i], 0))*ds_interior
+                      - jump(self.normal[1], self.test[i])*avg(viscosity_h*Dx(mom[i], 1))*ds_interior
+                      - avg(sigma_dxyz)*jump(self.normal[2], self.test[i])*avg(Dx(mom[i], 2))*ds_interior
+                     )
+                # SIPG terms
+                F += (
+                      alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[0])*jump(self.test[i], self.normal[0])*ds_interior
+                      + alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[1])*jump(self.test[i], self.normal[1])*ds_interior
+                      + avg(sigma_dxyz)*alpha_v*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[2])*ds_interior
+                     )
+                F += (
+                      -jump(mom[i], self.normal[0])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                      - jump(mom[i], self.normal[1])*avg(viscosity_h*Dx(self.test[i], 1))*ds_interior
+                      - avg(sigma_dxyz)*jump(mom[i], self.normal[2])*avg(Dx(self.test[i], 2))*ds_interior
+                     )
+
+                # terms from sigma transformation
+                F += (
+                      2*viscosity_h*Dx(mom[i], 2)*Dx(self.test[i]*sigma_dx, 0)*self.dx
+                      + 2*viscosity_h*Dx(mom[i], 2)*Dx(self.test[i]*sigma_dy, 1)*self.dx
+                     )
+                F += (
+                      -2*avg(sigma_dx*viscosity_h*Dx(mom[i], 2))*jump(self.test[i], self.normal[0])*ds_interior
+                      - 2*avg(sigma_dy*viscosity_h*Dx(mom[i], 2))*jump(self.test[i], self.normal[1])*ds_interior
+                     )
+                F += -viscosity_h*(Dx(sigma_dx, 0) + Dx(sigma_dy, 1))*Dx(mom[i], 2)*self.test[i]*self.dx #TODO note here no integration by parts
+                # SIPG terms
+                F += (
+                      2*avg(sigma_dx)*alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[0])*ds_interior
+                      + 2*avg(sigma_dy)*alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[1])*ds_interior
+                     )
+                F += (
+                      -2*avg(sigma_dx)*jump(mom[i], self.normal[2])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                      - 2*avg(sigma_dy)*jump(mom[i], self.normal[2])*avg(viscosity_h*Dx(self.test[i], 1))*ds_interior
+                     )
+
+                # symmetric bottom boundary condition
+                # NOTE introduces a flux through the bed - breaks mass conservation
+                F += (
+                      - viscosity_h*Dx(mom[i], 0)*self.normal[0]*self.test[i]*(self.ds_bottom + self.ds_surf)
+                      - viscosity_h*Dx(mom[i], 1)*self.normal[1]*self.test[i]*(self.ds_bottom + self.ds_surf)
+                     ) # TODO add more?
+
+                return F
+
+            if include_vis_term:
+                if viscosity_h is None:
+                    viscosity_h = Constant(0)
+                if viscosity_v is None:
+                    viscosity_v = Constant(0)
+                sigma_dx = fields.get('sigma_dx')
+                sigma_dy = fields.get('sigma_dy')
+               # sigma_dxyz = fields.get('sigma_dxyz')
+                sigma_dz = 1./h_total
+                assert self.h_elem_size is not None, 'h_elem_size must be defined'
+                assert self.v_elem_size is not None, 'v_elem_size must be defined'
+                elemsize = (self.h_elem_size*(self.normal[0]**2 + self.normal[1]**2)
+                            + self.v_elem_size*self.normal[2]**2)
+                assert self.sipg_parameter is not None and self.sipg_parameter_vertical is not None
+                alpha_h = avg(self.sipg_parameter/elemsize)
+                alpha_v = avg(self.sipg_parameter_vertical/elemsize)
+                ds_interior = (self.dS_h + self.dS_v)
+                sigma_dxyz = viscosity_h*(sigma_dx**2 + sigma_dy**2) + viscosity_v*sigma_dz**2
+
+                for i in range(3):
+                    f += vis(i, mom)
+
+            # sponge damping term
+            sponge_damping_3d = fields.get('sponge_damping_3d')
+            if sponge_damping_3d is not None:
+                f += sponge_damping_3d*inner(self.test, mom)*self.dx
+
             # bathymetry gradient term
             bath_grad = as_vector((g_grav * h_total * Dx(self.bathymetry, 0), g_grav * h_total * Dx(self.bathymetry, 1), 0))
             f += -dot(bath_grad, self.test)*self.dx
+
+            # internal pressure gradient terms
+            int_pg = fields.get('int_pg')
+            if int_pg is not None:
+                f += h_total*(int_pg[0]*self.test[0] + int_pg[1]*self.test[1])*self.dx
 
             # add in boundary fluxes
             for bnd_marker in self.boundary_markers:
@@ -374,4 +469,93 @@ class MomentumEquation(Equation):
                         (abs(c_plus) * W_minus))))
 
         return Flux
+
+
+class InternalPressureGradientCalculator(MomentumEquation):
+    r"""
+    Computes the internal pressure gradient term, :math:`g\nabla_h r - g H \rho'/\rho_0 \nabla'_h \sigma`
+
+    """
+    def __init__(self, fields, options, bnd_functions, solver_parameters=None):
+        """
+        :arg solver: `class`FlowSolver` object
+        :kwarg dict solver_parameters: PETSc solver options
+        """
+        if solver_parameters is None:
+            solver_parameters = {}
+        self.fields = fields
+        self.options = options
+        function_space = self.fields.int_pg_3d.function_space()
+        bathymetry = self.fields.bathymetry_3d
+        super(InternalPressureGradientCalculator, self).__init__(
+            function_space, bathymetry, options)
+
+        solution = self.fields.int_pg_3d
+        fields = {
+            'baroc_head': self.fields.baroc_head_3d,
+            'sigma_dx': self.fields.sigma_dx,
+            'sigma_dy': self.fields.sigma_dy,
+            'elev_3d': self.fields.elev_3d,
+            'bath_3d': self.fields.bathymetry_3d,
+        }
+        l = -self.residual(solution, solution, fields, fields,
+                           bnd_conditions=bnd_functions)
+        trial = TrialFunction(self.function_space)
+        a = inner(trial, self.test) * self.dx
+        prob = LinearVariationalProblem(a, l, solution)
+        self.lin_solver = LinearVariationalSolver(prob, solver_parameters=solver_parameters)
+
+    def solve(self):
+        """
+        Computes internal pressure gradient and stores it in int_pg_3d field
+        """
+        self.lin_solver.solve()
+
+    def residual(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
+
+        bhead = fields_old.get('baroc_head')
+
+        if bhead is None:
+            return 0
+
+        by_parts = element_continuity(bhead.function_space().ufl_element()).horizontal == 'dg'
+
+        sigma_dx = fields_old.get('sigma_dx')
+        sigma_dy = fields_old.get('sigma_dy')
+
+        if True:
+            if by_parts:
+                div_test = (Dx(self.test[0], 0) + Dx(self.test[1], 1))
+                div_test_sigma = (Dx(sigma_dx*self.test[0], 2) + Dx(sigma_dy*self.test[1], 2))
+                f = -g_grav*bhead*(div_test + div_test_sigma)*self.dx
+                head_star = avg(bhead)
+                jump_n_dot_test = (jump(self.test[0], self.normal[0])
+                                   + jump(self.test[1], self.normal[1]))
+                jump_n_dot_test_sigma = (jump(sigma_dx*self.test[0], self.normal[2])
+                                         + jump(sigma_dy*self.test[1], self.normal[2]))
+                f += g_grav*head_star*(jump_n_dot_test + jump_n_dot_test_sigma)*(self.dS_v + self.dS_h)
+                n_dot_test = (self.normal[0]*self.test[0]
+                              + self.normal[1]*self.test[1])
+                n_dot_test_sigma = (sigma_dx*self.normal[2]*self.test[0]
+                                    + sigma_dy*self.normal[2]*self.test[1])
+                f += g_grav*bhead*(n_dot_test + n_dot_test_sigma)*(self.ds_bottom + self.ds_surf)
+                for bnd_marker in self.boundary_markers:
+                    funcs = bnd_conditions.get(bnd_marker)
+                    ds_bnd = ds_v(int(bnd_marker), degree=self.quad_degree)
+                    if bhead is not None:
+                        if funcs is not None and 'baroc_head' in funcs:
+                            r_ext = funcs['baroc_head']
+                            head_ext = r_ext
+                            head_in = bhead
+                            head_star = 0.5*(head_ext + head_in)
+                        else:
+                            head_star = bhead
+                        f += g_grav*head_star*(n_dot_test + n_dot_test_sigma)*ds_bnd
+            else:
+                grad_head_dot_test = (Dx(bhead, 0)*self.test[0] +
+                                      Dx(bhead, 1)*self.test[1])
+                grad_head_dot_test_sigma = (Dx(bhead, 2)*sigma_dx*self.test[0] +
+                                            Dx(bhead, 2)*sigma_dy*self.test[1])
+                f = g_grav * (grad_head_dot_test + grad_head_dot_test_sigma) * self.dx
+            return -f
 

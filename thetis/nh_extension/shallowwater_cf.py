@@ -542,6 +542,9 @@ class FreeSurfaceEquation(BaseShallowWaterEquation):
         h_2d = self.bathymetry + eta
         h = conditional(h_2d <= 0, 0, h_2d)
 
+        uv = fields.get('uv_2d')
+        total_h = self.bathymetry + eta_old + self.wd_depth_displacement(eta_old)
+
         # momentum
         if fields.get('mom_2d') is not None:
             mom = fields.get('mom_2d')

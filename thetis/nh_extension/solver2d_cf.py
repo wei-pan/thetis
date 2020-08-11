@@ -11,7 +11,7 @@ from .. import rungekutta
 from .. import implicitexplicit
 from .. import coupled_timeintegrator_2d
 from .. import tracer_eq_2d
-from . import limiter_nh
+from . import limiter_nh as limiter
 import weakref
 import time as time_mod
 from mpi4py import MPI
@@ -262,6 +262,7 @@ class FlowSolver(FrozenClass):
             self.solution_ls_old = Function(self.function_spaces.V_ls)
             self.solution_ls_mid = Function(self.function_spaces.V_ls)
             self.solution_ls_tmp = Function(self.function_spaces.V_ls)
+            self.slope = Function(self.function_spaces.H_ls).interpolate(self.options.bed_slope[2])
         # granular flow
         if self.options.flow_is_granular:
             self.bathymetry_ls = Function(self.function_spaces.H_ls)
@@ -272,7 +273,7 @@ class FlowSolver(FrozenClass):
             self.strain_rate_ls = Function(self.function_spaces.P1_ls)
             self.grad_p_ls = Function(self.function_spaces.U_ls)
             self.grad_p = Function(self.function_spaces.U_2d)
-            self.slope = Function(self.function_spaces.H_ls).interpolate(self.options.bed_slope[2])
+           # self.slope = Function(self.function_spaces.H_ls).interpolate(self.options.bed_slope[2])
             self.h_2d_ls = Function(self.function_spaces.P1_ls)
             self.h_2d_cg = Function(self.function_spaces.P1_2d)
 
@@ -327,8 +328,8 @@ class FlowSolver(FrozenClass):
 
         # initialise limiter
         if self.options.polynomial_degree == 1:
-            self.limiter_h = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.H_2d)
-            self.limiter_u = limiter_nh.VertexBasedP1DGLimiter(self.function_spaces.U_2d)
+            self.limiter_h = limiter.VertexBasedP1DGLimiter(self.function_spaces.H_2d)
+            self.limiter_u = limiter.VertexBasedP1DGLimiter(self.function_spaces.U_2d)
         else:
             self.limiter_h = None
             self.limiter_u = None
@@ -356,6 +357,7 @@ class FlowSolver(FrozenClass):
             'mom_2d': self.fields.mom_2d,
             'eta': self.fields.elev_2d,
             'uv_2d': self.fields.uv_2d,
+            'sponge_damping_2d': self.set_sponge_damping(self.options.sponge_layer_length, self.options.sponge_layer_start, alpha=10., sponge_is_2d=True),
             }
         if self.options.landslide:
             self.fields_sw.update({'slide_source': self.fields.slide_source_2d,})
@@ -590,6 +592,49 @@ class FlowSolver(FrozenClass):
                                      t=self.simulation_time, e=norm_eta,
                                      u=norm_uv, h=norm_hs, cpu=cputime))
         sys.stdout.flush()
+
+    def set_sponge_damping(self, length, sponge_start_point, alpha=10., sponge_is_2d=True):
+        """
+        Set damping terms to reduce the reflection on solid boundaries.
+        """
+        pi = 4*np.arctan(1.)
+        if length == [0., 0.]:
+            return None
+        if sponge_is_2d:
+            damping_coeff = Function(self.function_spaces.P1_2d)
+        else:
+            damping_coeff = Function(self.function_spaces.P1)
+        damp_vector = damping_coeff.dat.data[:]
+        mesh = damping_coeff.ufl_domain()
+        xvector = mesh.coordinates.dat.data[:, 0]
+        yvector = mesh.coordinates.dat.data[:, 1]
+        assert xvector.shape[0] == damp_vector.shape[0]
+        assert yvector.shape[0] == damp_vector.shape[0]
+        if xvector.max() <= sponge_start_point[0] + length[0]:
+            length[0] = xvector.max() - sponge_start_point[0]
+        if yvector.max() <= sponge_start_point[1] + length[1]:
+            length[1] = yvector.max() - sponge_start_point[1]
+
+        if length[0] > 0.:
+            for i, x in enumerate(xvector):
+                x = (x - sponge_start_point[0])/length[0]
+                if x > 0 and x < 0.5:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
+                elif x > 0.5 and x < 1.:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
+                else:
+                    damp_vector[i] = 0.
+        if length[1] > 0.:
+            for i, y in enumerate(yvector):
+                x = (y - sponge_start_point[1])/length[1]
+                if x > 0 and x < 0.5:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(2.*x - 0.5))/(1. - (4.*x - 1.)**2)) + 1.)
+                elif x > 0.5 and x < 1.:
+                    damp_vector[i] = alpha*0.25*(np.tanh(np.sin(pi*(1.5 - 2*x))/(1. - (3. - 4.*x)**2)) + 1.)
+                else:
+                    damp_vector[i] = 0.
+
+        return damping_coeff
 
     def iterate(self, update_forcings=None,
                 export_func=None):
@@ -1021,7 +1066,7 @@ class FlowSolver(FrozenClass):
                     self.h_2d_ls.dat.data[:] = self.h_2d_cg.dat.data[:]
                 for i in range(self.options.n_dt):
                     # solve fluid pressure on slide
-                    self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]*sqrt(2)
+                    self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
                     solver_pf.solve()
                     self.grad_p_ls.dat.data[:] = self.grad_p.dat.data[:]
 
@@ -1054,10 +1099,10 @@ class FlowSolver(FrozenClass):
                     self.fields.slide_source_2d.assign(0.)
                     if self.simulation_time >= 0.:
                         self.fields.slide_source_2d.dat.data[ind_wet] = (self.fields.solution_ls.sub(0).dat.data[ind_wet] 
-                                                                         - self.solution_ls_old.sub(0).dat.data[ind_wet])/self.dt*sqrt(2)
+                                                                         - self.solution_ls_old.sub(0).dat.data[ind_wet])/self.dt/self.slope.dat.data.min()
 
                     # NOTE `self.bathymetry_init` initialised does not vary with time
-                    self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]*sqrt(2)
+                    self.bathymetry_dg.dat.data[:] = self.bathymetry_init.dat.data[:] - self.fields.h_ls.dat.data[:]/self.slope.dat.data.min()
                     if self.options.use_hllc_flux:
                         # detect before hitting water
                         h_init = self.elev_init.dat.data + self.bathymetry_dg.dat.data

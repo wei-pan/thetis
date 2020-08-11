@@ -195,8 +195,7 @@ class PressureGradientTerm(MomentumTerm):
     def residual(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
         int_pg = fields.get('int_pg')
         ext_pg = fields.get('ext_pg')
-        eta = fields.get('elev_3d')
-        total_h = eta + self.bathymetry #TODO move to InternalPressureGradientCalculator or baroc_head_3d solver
+
         f = 0
         if self.horizontal_domain_is_2d:
             if int_pg is not None:
@@ -1319,6 +1318,185 @@ class SourceTerm_in_VertMom(MomentumTerm):
 #################################################
 
 
+class SigmaViscosityTerm(MomentumTerm):
+
+    def residual(self, solution, solution_old, fields, fields_old, bnd_conditions=None):
+
+        if self.horizontal_domain_is_2d:
+            # viscous terms
+            def vis(i, mom):
+                F = 0
+                F += (
+                      viscosity_h*Dx(mom[i], 0)*Dx(self.test[i], 0)*self.dx
+                      + viscosity_h*Dx(mom[i], 1)*Dx(self.test[i], 1)*self.dx
+                      + viscosity_v*Dx(mom[i], 2)*Dx(sigma_dxyz*self.test[i], 2)*self.dx
+                     )
+                F += (
+                      -jump(self.normal[0], self.test[i])*avg(viscosity_h*Dx(mom[i], 0))*ds_interior
+                      - jump(self.normal[1], self.test[i])*avg(viscosity_h*Dx(mom[i], 1))*ds_interior
+                      - avg(sigma_dxyz)*jump(self.normal[2], self.test[i])*avg(Dx(mom[i], 2))*ds_interior
+                     )
+                # SIPG terms
+                F += (
+                      alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[0])*jump(self.test[i], self.normal[0])*ds_interior
+                      + alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[1])*jump(self.test[i], self.normal[1])*ds_interior
+                      + avg(sigma_dxyz)*alpha_v*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[2])*ds_interior
+                     )
+                F += (
+                      -jump(mom[i], self.normal[0])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                      - jump(mom[i], self.normal[1])*avg(viscosity_h*Dx(self.test[i], 1))*ds_interior
+                      - avg(sigma_dxyz)*jump(mom[i], self.normal[2])*avg(Dx(self.test[i], 2))*ds_interior
+                     )
+
+                # terms from sigma transformation
+                F += (
+                      2*viscosity_h*Dx(mom[i], 2)*Dx(self.test[i]*sigma_dx, 0)*self.dx
+                      + 2*viscosity_h*Dx(mom[i], 2)*Dx(self.test[i]*sigma_dy, 1)*self.dx
+                     )
+                F += (
+                      -2*avg(sigma_dx*viscosity_h*Dx(mom[i], 2))*jump(self.test[i], self.normal[0])*ds_interior
+                      - 2*avg(sigma_dy*viscosity_h*Dx(mom[i], 2))*jump(self.test[i], self.normal[1])*ds_interior
+                     )
+                F += -viscosity_h*(Dx(sigma_dx, 0) + Dx(sigma_dy, 1))*Dx(mom[i], 2)*self.test[i]*self.dx #TODO note here no integration by parts
+                # SIPG terms
+                F += (
+                      2*avg(sigma_dx)*alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[0])*ds_interior
+                      + 2*avg(sigma_dy)*alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[2])*jump(self.test[i], self.normal[1])*ds_interior
+                     )
+                F += (
+                      -2*avg(sigma_dx)*jump(mom[i], self.normal[2])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                      - 2*avg(sigma_dy)*jump(mom[i], self.normal[2])*avg(viscosity_h*Dx(self.test[i], 1))*ds_interior
+                     )
+
+                # symmetric bottom boundary condition
+                # NOTE introduces a flux through the bed - breaks mass conservation
+                F += (
+                      - viscosity_h*Dx(mom[i], 0)*self.normal[0]*self.test[i]*(self.ds_bottom + self.ds_surf)
+                      - viscosity_h*Dx(mom[i], 1)*self.normal[1]*self.test[i]*(self.ds_bottom + self.ds_surf)
+                     ) # TODO add more?
+
+                return F
+
+            if True:
+                f = 0
+                viscosity_h = fields_old['viscosity_h']
+                viscosity_v = fields_old['viscosity_v']
+                if viscosity_h is None and viscosity_v is None:
+                    return 0
+                if viscosity_h is None:
+                    viscosity_h = Constant(0)
+                if viscosity_v is None:
+                    viscosity_v = Constant(0)
+                sigma_dx = fields.get('sigma_dx')
+                sigma_dy = fields.get('sigma_dy')
+               # sigma_dxyz = fields.get('sigma_dxyz')
+                h_total = self.bathymetry + fields.get('elev_3d')
+                sigma_dz = 1./h_total
+                assert self.h_elem_size is not None, 'h_elem_size must be defined'
+                assert self.v_elem_size is not None, 'v_elem_size must be defined'
+                degree_h, degree_v = self.function_space.ufl_element().degree()
+                elemsize = (self.h_elem_size*(self.normal[0]**2 + self.normal[1]**2)
+                            + self.v_elem_size*self.normal[2]**2)
+                sigma_h = 5.0*degree_h*(degree_h + 1)/elemsize
+                sigma_v = 5.0*degree_v*(degree_v + 1)/elemsize
+                if degree_h == 0:
+                    sigma_h = 1.5/elemsize
+                if degree_v == 0:
+                    sigma_v = 1.0/elemsize
+                alpha_h = avg(sigma_h)
+                alpha_v = avg(sigma_v)
+
+                ds_interior = (self.dS_h + self.dS_v)
+                sigma_dxyz = viscosity_h*(sigma_dx**2 + sigma_dy**2) + viscosity_v*sigma_dz**2
+
+                for i in range(3):
+                    f += vis(i, solution)
+
+            return -f
+
+        else:
+            # viscous terms
+            def vis(i, mom):
+                F = 0
+                F += (
+                      viscosity_h*Dx(mom[i], 0)*Dx(self.test[i], 0)*self.dx
+                      + viscosity_v*Dx(mom[i], 1)*Dx(sigma_dxyz*self.test[i], 1)*self.dx
+                     )
+                F += (
+                      -jump(self.normal[0], self.test[i])*avg(viscosity_h*Dx(mom[i], 0))*ds_interior
+                      - avg(sigma_dxyz)*jump(self.normal[1], self.test[i])*avg(Dx(mom[i], 1))*ds_interior
+                     )
+                # SIPG terms
+                F += (
+                      alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[0])*jump(self.test[i], self.normal[0])*ds_interior
+                      + avg(sigma_dxyz)*alpha_v*jump(mom[i], self.normal[1])*jump(self.test[i], self.normal[1])*ds_interior
+                     )
+                F += (
+                      -jump(mom[i], self.normal[0])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                      - avg(sigma_dxyz)*jump(mom[i], self.normal[1])*avg(Dx(self.test[i], 1))*ds_interior
+                     )
+
+                # terms from sigma transformation
+                F += (
+                      2*viscosity_h*Dx(mom[i], 1)*Dx(self.test[i]*sigma_dx, 0)*self.dx
+                     )
+                F += (
+                      -2*avg(sigma_dx*viscosity_h*Dx(mom[i], 1))*jump(self.test[i], self.normal[0])*ds_interior
+                     )
+                F += -viscosity_h*(Dx(sigma_dx, 0))*Dx(mom[i], 1)*self.test[i]*self.dx #TODO note here no integration by parts
+                # SIPG terms
+                F += (
+                      2*avg(sigma_dx)*alpha_h*avg(viscosity_h)*jump(mom[i], self.normal[1])*jump(self.test[i], self.normal[0])*ds_interior
+                     )
+                F += (
+                      -2*avg(sigma_dx)*jump(mom[i], self.normal[1])*avg(viscosity_h*Dx(self.test[i], 0))*ds_interior
+                     )
+
+                # symmetric bottom boundary condition
+                # NOTE introduces a flux through the bed - breaks mass conservation
+                F += (
+                      - viscosity_h*Dx(mom[i], 0)*self.normal[0]*self.test[i]*(self.ds_bottom + self.ds_surf)
+                     ) # TODO add more?
+
+                return F
+
+            if True:
+                f = 0
+                viscosity_h = fields_old['viscosity_h']
+                viscosity_v = fields_old['viscosity_v']
+                if viscosity_h is None and viscosity_v is None:
+                    return 0
+                if viscosity_h is None:
+                    viscosity_h = Constant(0)
+                if viscosity_v is None:
+                    viscosity_v = Constant(0)
+                sigma_dx = fields.get('sigma_dx')
+               # sigma_dxyz = fields.get('sigma_dxyz')
+                h_total = self.bathymetry + fields.get('elev_3d')
+                sigma_dz = 1./h_total
+                assert self.h_elem_size is not None, 'h_elem_size must be defined'
+                assert self.v_elem_size is not None, 'v_elem_size must be defined'
+                degree_h, degree_v = self.function_space.ufl_element().degree()
+                elemsize = (self.h_elem_size*(self.normal[0]**2)
+                            + self.v_elem_size*self.normal[1]**2)
+                sigma_h = 5.0*degree_h*(degree_h + 1)/elemsize
+                sigma_v = 5.0*degree_v*(degree_v + 1)/elemsize
+                if degree_h == 0:
+                    sigma_h = 1.5/elemsize
+                if degree_v == 0:
+                    sigma_v = 1.0/elemsize
+                alpha_h = avg(sigma_h)
+                alpha_v = avg(sigma_v)
+
+                ds_interior = (self.dS_h + self.dS_v)
+                sigma_dxyz = viscosity_h*(sigma_dx**2) + viscosity_v*sigma_dz**2
+
+                for i in range(2):
+                    f += vis(i, solution)
+
+            return -f
+
+
 class MomentumEquation(Equation):
     """
     Hydrostatic 3D momentum equation :eq:`mom_eq_split` for mode split models
@@ -1345,8 +1523,8 @@ class MomentumEquation(Equation):
         self.add_term(PressureGradientTerm(*args), 'source')
         self.add_term(HorizontalAdvectionTerm(*args), 'explicit')
         self.add_term(VerticalAdvectionTerm(*args), 'explicit')
-        self.add_term(HorizontalViscosityTerm(*args), 'explicit')
-        self.add_term(VerticalViscosityTerm(*args), 'explicit')
+      #  self.add_term(HorizontalViscosityTerm(*args), 'explicit')
+      #  self.add_term(VerticalViscosityTerm(*args), 'explicit')
         self.add_term(BottomFrictionTerm(*args), 'explicit')
         self.add_term(LinearDragTerm(*args), 'explicit')
         self.add_term(CoriolisTerm(*args), 'explicit')
@@ -1356,9 +1534,11 @@ class MomentumEquation(Equation):
         # add terms in the vertical momentum equation
         self.add_term(HorizontalAdvectionTerm_in_VertMom(*args), 'explicit')
         self.add_term(VerticalAdvectionTerm_in_VertMom(*args), 'explicit')
-        self.add_term(HorizontalViscosityTerm_in_VertMom(*args), 'explicit')
-        self.add_term(VerticalViscosityTerm_in_VertMom(*args), 'explicit')
+       # self.add_term(HorizontalViscosityTerm_in_VertMom(*args), 'explicit')
+       # self.add_term(VerticalViscosityTerm_in_VertMom(*args), 'explicit')
         self.add_term(SourceTerm_in_VertMom(*args), 'explicit')
+
+        self.add_term(SigmaViscosityTerm(*args), 'explicit') # account for sigma transformation
 
 
 class InternalPressureGradientCalculator(MomentumTerm):
